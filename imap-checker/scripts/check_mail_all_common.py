@@ -278,7 +278,7 @@ def write_summary_txt(base_csv_path, section, section_cfg,
     lines.append(f"Số account login thành công  : {success}/{total_acc}")
     lines.append(f"Số account login lỗi         : {error_rows}/{total_acc}")
     lines.append(f"Số account login OK nhưng không có mail : {empty_success_count}")
-    lines.append(f"Số mail tìm thấy  : {total_rows - error_rows}")
+    lines.append(f"Số mail tìm thấy  : {total_rows - error_rows-empty_success_count}")
     lines.append("")
 
     lines.append("========== ĐẾM KEYWORDS_COUNT ==========")
