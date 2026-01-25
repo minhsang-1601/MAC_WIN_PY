@@ -244,7 +244,8 @@ def count_keywords_in_subject(rows, keywords_csv):
 def write_summary_txt(base_csv_path, section, section_cfg,
                       acc_name_no_ext, total_acc, error_count,
                       empty_success_count,
-                      all_data_rows):
+                      all_data_rows,
+                      accounts_path):  # ✅ thêm accounts_path
 
     base_dir = os.path.dirname(base_csv_path)
     base_name = os.path.splitext(os.path.basename(base_csv_path))[0]
@@ -265,20 +266,21 @@ def write_summary_txt(base_csv_path, section, section_cfg,
 
     lines = []
     lines.append("========== THÔNG TIN SECTION ==========")
-    lines.append(f"SECTION         : {section}")
-    lines.append(f"subject_title   : {subject_title}")
-    lines.append(f"keywords        : {keywords}")
-    lines.append(f"recent_minutes  : {recent_minutes}")
-    lines.append(f"max_results     : {max_results}")
-    lines.append(f"keywords_count  : {keywords_count}")
+    lines.append(f"SECTION             : {section}")
+    lines.append(f"File input account  : {os.path.basename(accounts_path)}")  # ✅ thêm dòng này
+    lines.append(f"subject_title       : {subject_title}")
+    lines.append(f"keywords            : {keywords}")
+    lines.append(f"recent_minutes      : {recent_minutes}")
+    lines.append(f"max_results         : {max_results}")
+    lines.append(f"keywords_count      : {keywords_count}")
     lines.append("")
     
     lines.append("========== KẾT QUẢ ==========")
-    lines.append(f"Tổng số account       : {total_acc}")
-    lines.append(f"Số account login thành công  : {success}/{total_acc}")
-    lines.append(f"Số account login lỗi         : {error_rows}/{total_acc}")
-    lines.append(f"Số account login OK nhưng không có mail : {empty_success_count}")
-    lines.append(f"Số mail tìm thấy  : {total_rows - error_rows-empty_success_count}")
+    lines.append(f"Tổng số account                 : {total_acc}")
+    lines.append(f"Số account login lỗi            : {error_rows}/{total_acc}")
+    lines.append(f"Số account login thành công     : {success}/{total_acc}")
+    lines.append(f"Số account không có mail        : {empty_success_count}")
+    lines.append(f"Số mail tìm thấy                : {total_rows - error_rows - empty_success_count}")
     lines.append("")
 
     lines.append("========== ĐẾM KEYWORDS_COUNT ==========")
@@ -429,7 +431,8 @@ def main():
                 total_acc,
                 error_count,
                 empty_success_count,
-                all_data_rows
+                all_data_rows,
+                accounts_path  # ✅ thêm accounts_path
             )
 
         if final_file and summary_file and send_flag == "1":
