@@ -18,7 +18,8 @@ def smart_mkdir(path: Path):
 def smart_touch(file_path: Path):
     try:
         if not file_path.exists():
-            file_path.touch(encoding="utf-8")
+            # ❌ file_path.touch(encoding="utf-8")  (Python không hỗ trợ encoding)
+            file_path.touch()   # ✅ chỉ bỏ encoding, giữ nguyên logic
             print(f"[+] File OK: {file_path.name}")
         else:
             print(f"[!] File đã tồn tại: {file_path.name}")
