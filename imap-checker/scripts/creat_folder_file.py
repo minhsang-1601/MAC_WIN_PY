@@ -45,6 +45,11 @@ account_files = [
     "accounts_gm_ok",
     "accounts_gm_test",
     "accounts_gm_all",
+    "accounts_gm_check_1",
+    "accounts_gm_check_2",
+    "accounts_gm_check_3",
+    "accounts_gm_check_4",
+    "accounts_gm_check_5",
     "accounts_gm_wait",
 ]
 
