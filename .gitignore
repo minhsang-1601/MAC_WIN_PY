@@ -1,0 +1,4 @@
+.DS_Store
+/imap-checker/LOG*
+/imap-checker/SEND_MAIL*
+/imap-checker/account*

@@ -1,0 +1,9 @@
+1.mail_account.conf body ↓
+
+SENDER_EMAIL = "lanxxxxx@gmail.com"
+APP_PASSWORD = "xxxxxxxxxxx"
+
+TO_EMAILS = [
+    "minhsang16019x@gmail.com",
+    "minhminh@gmail.com",
+]
