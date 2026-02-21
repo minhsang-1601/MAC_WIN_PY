@@ -1,0 +1,12 @@
+🔸Need 引数
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/scripts/check_gmail_common.py <email> <password> [section]
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/scripts/check_mail_all_common.py <SECTION> [ACCOUNTS_FILE] [SEND_FLAG]
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/scripts/clean_mail_common.py python3 clean_mail.py <mail_list_txt> <so_thang>
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/scripts/getbody_mail_common.py <email> <password> [section]
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/scripts/send_file_common.py <file1> [file2] [file3]
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/RUN/run_multi.py <SECTION>
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/scripts/gmail_move_spam.py ...
+
+🔸No 引数
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/scripts/creat_folder_file.py
+python3 /Users/minhsang1601/MAC_WIN_PY/imap-checker/scripts/gen_passwords.py
