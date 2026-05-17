@@ -1,0 +1,12 @@
+# Email gửi đi (Gmail hoặc dịch vụ mail khác)
+SENDER_EMAIL = "your_email@gmail.com"
+
+# Mật khẩu ứng dụng (App Password - 16 ký tự, không phải mật khẩu chính)
+APP_PASSWORD = "abcd efgh ijkl mnop"
+
+# Danh sách email nhận (phải để trong ngoặc vuông [] theo định dạng list)
+TO_EMAILS = [
+    "recipient1@gmail.com",
+    "recipient2@yahoo.com",
+    "another_email@company.com"
+]
