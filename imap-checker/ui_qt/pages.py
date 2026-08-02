@@ -352,6 +352,10 @@ class CleanMailTab(BaseJobTab):
         layout.addWidget(warn)
 
         form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignLeft)
+        form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        form.setHorizontalSpacing(16)
         self.file_cb = QtWidgets.QComboBox()
         self.months_spin = QtWidgets.QSpinBox()
         self.months_spin.setRange(0, 120)
