@@ -28,8 +28,8 @@ RESULTS_DIR = os.path.join(BASE_DIR, "LOG")
 SEND_SCRIPT = os.path.join(BASE_DIR, "scripts", "send_file_common.py")
 # ---------------------------------------------
 
-IMAP_HOST = "imap.gmail.com"
-IMAP_PORT = 993
+sys.path.insert(0, BASE_DIR)
+from common.providers import resolve_imap_host
 
 
 def parse_args():
@@ -347,7 +347,8 @@ def main():
     for idx, (email_addr, pwd) in enumerate(accounts, 1):
         print(f"Processing {idx}/{total_acc}: {email_addr}", end="", flush=True)
         try:
-            imap = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+            host, port = resolve_imap_host(email_addr)
+            imap = imaplib.IMAP4_SSL(host, port)
             imap.login(email_addr, pwd)
             matches = search_and_collect(imap, email_addr, cfg[section])
             print(f"\n[{email_addr}] -> Tìm thấy {len(matches)} mail.")

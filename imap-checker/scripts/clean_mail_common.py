@@ -4,15 +4,16 @@ import os
 import datetime
 from pathlib import Path
 
-# ============ CAU HINH TU DONG (MAC & WIN) ============
-IMAP_HOST = "imap.gmail.com"
-IMAP_PORT = 993
-MAILBOX = "INBOX" 
-
 home = Path.home()
 BASE_DIR = home / "MAC_WIN_PY" / "imap-checker"
 LOG_DIR = BASE_DIR / "LOG"
 CONTEXT_DIR = BASE_DIR / "account"
+
+sys.path.insert(0, str(BASE_DIR))
+from common.providers import resolve_imap_host, get_provider
+
+# ============ CAU HINH TU DONG (MAC & WIN) ============
+MAILBOX = "INBOX"
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # Ngày hiện tại hiển thị: 2026-01-15
@@ -20,23 +21,25 @@ current_date = datetime.date.today().strftime("%Y-%m-%d")
 PROCESS_LOG_FILE = LOG_DIR / f"Clean_mail_{current_date}.log"
 # ======================================================
 
-def xoa_gmail(email, app_password, months_to_keep):
+def xoa_mail(email, app_password, months_to_keep):
     mail = None
     try:
         print(f"==> Dang dang nhap: {email}...")
-        mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
-        
+        host, port = resolve_imap_host(email)
+        mail = imaplib.IMAP4_SSL(host, port)
+
         typ, data = mail.login(email, app_password)
         if typ != 'OK':
             print(f"    [!] That bai: Dang nhap khong thanh cong.")
             return
 
         status, data = mail.select(MAILBOX)
-        if status != 'OK':
+        if status != 'OK' and get_provider(email) == "gmail":
+            # Chỉ Gmail có mailbox ảo "All Mail" để fallback
             status, data = mail.select('"[Gmail]/All Mail"')
-            if status != 'OK':
-                print("    [!] That bai: Khong truy cap duoc hop thu.")
-                return
+        if status != 'OK':
+            print("    [!] That bai: Khong truy cap duoc hop thu.")
+            return
 
         # LOGIC TINH TOAN THEO THANG & DINH DANG YYYY-MM-DD
         if months_to_keep == 0:
@@ -85,7 +88,7 @@ def xoa_gmail(email, app_password, months_to_keep):
                 pass
 
 def main():
-    print(f"\n--- GMAIL CLEANER 2026 | Ngay: {current_date} ---")
+    print(f"\n--- MAIL CLEANER (Gmail/Yahoo) 2026 | Ngay: {current_date} ---")
     
     if len(sys.argv) < 3:
         print("Su dung: python3 clean_mail.py <file_txt> <so_thang>")
@@ -107,7 +110,7 @@ def main():
     for line in lines:
         if "," in line:
             acc, pwd = line.split(",", 1)
-            xoa_gmail(acc.strip(), pwd.strip(), months)
+            xoa_mail(acc.strip(), pwd.strip(), months)
 
     print("\n--- HOAN TAT ---")
 

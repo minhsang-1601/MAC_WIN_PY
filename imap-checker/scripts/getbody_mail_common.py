@@ -11,9 +11,10 @@ import os
 import configparser
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.providers import resolve_imap_host
+
 # ============ CAU HINH TU DONG (CHAY DUOC CA MAC & WIN) ============
-IMAP_HOST = "imap.gmail.com"
-IMAP_PORT = 993
 MAILBOX = "INBOX"
 
 home = Path.home()
@@ -86,7 +87,8 @@ def main():
 
     try:
         # Tham khảo tài liệu IMAP tại: https://docs.python.org
-        imap = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+        host, port = resolve_imap_host(email_user)
+        imap = imaplib.IMAP4_SSL(host, port)
         imap.login(email_user, password)
         imap.select(MAILBOX, readonly=True)
     except Exception as e:
