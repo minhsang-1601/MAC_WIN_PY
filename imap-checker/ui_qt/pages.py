@@ -428,6 +428,8 @@ class AccountsPage(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._dirty = False
+        self._last_index = 0
         layout = QtWidgets.QVBoxLayout(self)
         title = QtWidgets.QLabel("Quản lý Account")
         title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1a3a6e;")
@@ -435,7 +437,7 @@ class AccountsPage(QtWidgets.QWidget):
 
         top = QtWidgets.QHBoxLayout()
         self.file_cb = QtWidgets.QComboBox()
-        self.file_cb.currentIndexChanged.connect(self._load_table)
+        self.file_cb.currentIndexChanged.connect(self._on_file_changed)
         top.addWidget(QtWidgets.QLabel("Chọn file:"))
         top.addWidget(self.file_cb, 1)
 
@@ -479,6 +481,11 @@ class AccountsPage(QtWidgets.QWidget):
         self.reload()
 
     def reload(self):
+        """Nạp lại danh sách file + bảng từ đĩa — bỏ qua toàn bộ nếu đang có
+        thay đổi chưa lưu (kể cả file mới tạo chưa bấm Lưu), tránh mất dữ liệu
+        khi chuyển trang đi rồi quay lại."""
+        if self._dirty:
+            return
         h.ACCOUNT_DIR.mkdir(parents=True, exist_ok=True)
         current = self.file_cb.currentText()
         self._files = h.list_account_files()
@@ -487,16 +494,49 @@ class AccountsPage(QtWidgets.QWidget):
         self.file_cb.addItems([p.name for p in self._files])
         idx = self.file_cb.findText(current)
         self.file_cb.setCurrentIndex(idx if idx >= 0 else 0)
+        self._last_index = self.file_cb.currentIndex()
         self.file_cb.blockSignals(False)
+        self._load_table()
+
+    def has_unsaved_changes(self):
+        return self._dirty
+
+    def _on_file_changed(self, index):
+        if self._dirty:
+            ret = QtWidgets.QMessageBox.question(
+                self, "Có thay đổi chưa lưu",
+                "File hiện tại có thay đổi chưa lưu. Đổi file sẽ mất thay đổi này.\n\nVẫn đổi?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if ret != QtWidgets.QMessageBox.Yes:
+                self.file_cb.blockSignals(True)
+                self.file_cb.setCurrentIndex(self._last_index)
+                self.file_cb.blockSignals(False)
+                return
+        self._last_index = index
+        self._dirty = False
         self._load_table()
 
     def _create_file(self):
         name = self.new_name_edit.text().strip()
         if not name:
             return
-        (h.ACCOUNT_DIR / name).touch(exist_ok=True)
+        if any(p.name == name for p in self._files):
+            QtWidgets.QMessageBox.warning(self, "Trùng tên", "File đã tồn tại.")
+            return
+        # Chỉ thêm vào danh sách hiển thị — CHƯA tạo file thật trên đĩa.
+        # Bấm "Lưu" mới thật sự ghi file (write_account_lines tự tạo file mới).
+        self._files.append(h.ACCOUNT_DIR / name)
         self.new_name_edit.clear()
-        self.reload()
+        self.file_cb.blockSignals(True)
+        self.file_cb.addItem(name)
+        self.file_cb.setCurrentIndex(self.file_cb.count() - 1)
+        self._last_index = self.file_cb.currentIndex()
+        self.file_cb.blockSignals(False)
+        self.table.setRowCount(0)
+        self.warn_label.setText("")
+        self._dirty = True
 
     def _current_path(self):
         if not self._files or self.file_cb.currentIndex() < 0:
@@ -547,6 +587,7 @@ class AccountsPage(QtWidgets.QWidget):
         self.table.blockSignals(False)
 
     def _on_item_changed(self, item):
+        self._dirty = True
         row = item.row()
         if item.column() == self.COL_EMAIL:
             prov_item = self.table.item(row, self.COL_PROVIDER)
@@ -572,11 +613,15 @@ class AccountsPage(QtWidgets.QWidget):
         row = self.table.rowCount()
         self.table.insertRow(row)
         self._set_row(row, "", "")
+        self._dirty = True
 
     def _delete_selected_rows(self):
         rows = sorted({idx.row() for idx in self.table.selectedIndexes()}, reverse=True)
+        if not rows:
+            return
         for r in rows:
             self.table.removeRow(r)
+        self._dirty = True
 
     def _save(self):
         path = self._current_path()
@@ -591,6 +636,7 @@ class AccountsPage(QtWidgets.QWidget):
             if email_addr:
                 rows.append((email_addr, pwd))
         h.write_account_lines(path, rows)
+        self._dirty = False
         QtWidgets.QMessageBox.information(self, "Đã lưu", f"Đã lưu {len(rows)} account vào {path.name}")
         self.reload()
 
@@ -602,6 +648,8 @@ class AccountsPage(QtWidgets.QWidget):
 class ConfigPage(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._dirty = False
+        self._loading = False
         layout = QtWidgets.QVBoxLayout(self)
         title = QtWidgets.QLabel("Cấu hình (config.ini)")
         title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1a3a6e;")
@@ -623,10 +671,16 @@ class ConfigPage(QtWidgets.QWidget):
 
         self.group = QtWidgets.QGroupBox("")
         form = QtWidgets.QFormLayout(self.group)
+        form.setLabelAlignment(QtCore.Qt.AlignLeft)
+        form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        form.setHorizontalSpacing(16)
         self.fields = {}
         for field in h.CONFIG_FIELDS:
             edit = QtWidgets.QLineEdit()
-            form.addRow(f"{field}:", edit)
+            edit.textChanged.connect(self._mark_dirty)
+            label = h.CONFIG_FIELD_LABELS.get(field, field)
+            form.addRow(f"{label}:", edit)
             self.fields[field] = edit
         layout.addWidget(self.group)
 
@@ -644,8 +698,16 @@ class ConfigPage(QtWidgets.QWidget):
         self.reload()
 
     def reload(self):
+        """Nạp lại từ đĩa — bỏ qua nếu đang có thay đổi chưa lưu, tránh mất dữ liệu
+        khi chuyển trang đi rồi quay lại (chỉ 'Lưu section' mới thật sự ghi đĩa)."""
+        if self._dirty:
+            self._refresh_dropdown()
+            return
         self.cfg = h.load_ini()
-        current = self.section_cb.currentText()
+        self._refresh_dropdown()
+
+    def _refresh_dropdown(self, select=None):
+        current = select if select is not None else self.section_cb.currentText()
         self.section_cb.blockSignals(True)
         self.section_cb.clear()
         self.section_cb.addItems(h.job_sections(self.cfg))
@@ -654,12 +716,21 @@ class ConfigPage(QtWidgets.QWidget):
         self.section_cb.blockSignals(False)
         self._load_section()
 
+    def _mark_dirty(self):
+        if not self._loading:
+            self._dirty = True
+
+    def has_unsaved_changes(self):
+        return self._dirty
+
     def _load_section(self):
+        self._loading = True
         section = self.section_cb.currentText()
         self.group.setTitle(f"[{section}]" if section else "")
         for field, edit in self.fields.items():
             val = self.cfg[section].get(field, "") if section and section in self.cfg else ""
             edit.setText(val)
+        self._loading = False
 
     def _create_section(self):
         name = self.new_section_edit.text().strip()
@@ -668,10 +739,11 @@ class ConfigPage(QtWidgets.QWidget):
         if name in self.cfg:
             QtWidgets.QMessageBox.warning(self, "Trùng tên", "Section đã tồn tại.")
             return
+        # Chỉ thêm vào bộ nhớ — CHƯA ghi xuống đĩa. Phải bấm "Lưu section" mới lưu thật.
         self.cfg[name] = {k: "" for k in h.CONFIG_FIELDS}
-        h.save_ini(self.cfg)
         self.new_section_edit.clear()
-        self.reload()
+        self._refresh_dropdown(select=name)
+        self._dirty = True
 
     def _save_section(self):
         section = self.section_cb.currentText()
@@ -680,6 +752,7 @@ class ConfigPage(QtWidgets.QWidget):
         for field, edit in self.fields.items():
             self.cfg[section][field] = edit.text()
         h.save_ini(self.cfg)
+        self._dirty = False
         QtWidgets.QMessageBox.information(self, "Đã lưu", f"Đã lưu section [{section}].")
 
     def _delete_section(self):
@@ -693,4 +766,6 @@ class ConfigPage(QtWidgets.QWidget):
         if ret == QtWidgets.QMessageBox.Yes:
             self.cfg.remove_section(section)
             h.save_ini(self.cfg)
-            self.reload()
+            self._dirty = False
+            self.cfg = h.load_ini()
+            self._refresh_dropdown()

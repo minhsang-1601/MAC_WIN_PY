@@ -70,3 +70,24 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_show_config(self):
         self._select(3)
         self.config_page.reload()
+
+    def closeEvent(self, event):
+        unsaved = []
+        if self.config_page.has_unsaved_changes():
+            unsaved.append("Cấu hình")
+        if self.accounts_page.has_unsaved_changes():
+            unsaved.append("Quản lý Account")
+
+        if unsaved:
+            ret = QtWidgets.QMessageBox.warning(
+                self,
+                "Có thay đổi chưa lưu",
+                f"Trang {', '.join(unsaved)} có thay đổi chưa lưu. "
+                "Đóng cửa sổ sẽ mất thay đổi này.\n\nVẫn đóng?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.Cancel,
+                QtWidgets.QMessageBox.Cancel,
+            )
+            if ret != QtWidgets.QMessageBox.Yes:
+                event.ignore()
+                return
+        event.accept()

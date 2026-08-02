@@ -33,6 +33,15 @@ SCRIPT_CLEAN = SCRIPTS_DIR / "clean_mail_common.py"
 
 CONFIG_FIELDS = ["from", "subject_title", "keywords", "recent_minutes", "max_results", "keywords_count"]
 
+CONFIG_FIELD_LABELS = {
+    "from": "Người gửi (from)",
+    "subject_title": "Tiêu đề chứa",
+    "keywords": "Từ khoá trong nội dung",
+    "recent_minutes": "Trong bao nhiêu phút gần đây",
+    "max_results": "Số kết quả tối đa",
+    "keywords_count": "Từ khoá để đếm",
+}
+
 
 def provider_label(email_addr):
     if not email_addr:
