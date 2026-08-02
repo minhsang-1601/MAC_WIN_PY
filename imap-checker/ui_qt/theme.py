@@ -225,7 +225,16 @@ QTableWidget QComboBox, QTableView QComboBox {
     border-radius: 0;
 }
 QComboBox::drop-down { border: none; width: 20px; }
-QComboBox::down-arrow { image: none; }
+QComboBox::down-arrow {
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #1a3a6e;
+    margin-right: 6px;
+}
+/* ComboBox trong bảng: ẩn hẳn mũi tên — bảng đã chật, mũi tên gây rối. */
+QTableWidget QComboBox::down-arrow, QTableView QComboBox::down-arrow { image: none; border: none; }
 QComboBox QAbstractItemView {
     background: #ffffff;
     color: #1a1a1a;
