@@ -209,6 +209,10 @@ class CheckAllTab(BaseJobTab):
         layout.addWidget(QtWidgets.QLabel("Chạy check_mail_all_common.py cho nhiều account theo 1 section."))
 
         form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignLeft)
+        form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        form.setHorizontalSpacing(16)
         self.section_cb = QtWidgets.QComboBox()
         self.file_cb = QtWidgets.QComboBox()
         form.addRow("Section:", self.section_cb)
@@ -288,6 +292,10 @@ class SingleAccountTab(BaseJobTab):
         layout.addWidget(QtWidgets.QLabel(description))
 
         form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignLeft)
+        form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        form.setHorizontalSpacing(16)
         self.email_edit = QtWidgets.QLineEdit()
         pwd_row = QtWidgets.QHBoxLayout()
         self.pwd_edit = QtWidgets.QLineEdit()
