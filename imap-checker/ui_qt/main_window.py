@@ -11,6 +11,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle("IMAP Checker")
         self.resize(1150, 760)
 
+        try:
+            h.cleanup_old_logs()
+        except Exception:
+            pass
+
         self.dashboard_page = DashboardPage()
         self.run_job_page = RunJobPage()
         self.accounts_page = AccountsPage()

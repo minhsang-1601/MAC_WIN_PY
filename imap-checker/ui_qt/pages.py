@@ -17,11 +17,16 @@ class ProcessRunner(QtCore.QObject):
     output = QtCore.pyqtSignal(str)
     finished = QtCore.pyqtSignal(int)
 
-    def __init__(self, cmd, cwd=None, parent=None):
+    def __init__(self, cmd, cwd=None, extra_env=None, parent=None):
         super().__init__(parent)
         self.process = QtCore.QProcess(self)
         if cwd:
             self.process.setWorkingDirectory(cwd)
+        if extra_env:
+            env = QtCore.QProcessEnvironment.systemEnvironment()
+            for key, val in extra_env.items():
+                env.insert(key, val)
+            self.process.setProcessEnvironment(env)
         self.process.setProcessChannelMode(QtCore.QProcess.MergedChannels)
         self.process.readyReadStandardOutput.connect(self._on_ready)
         self.process.finished.connect(lambda code, status: self.finished.emit(code))
@@ -95,6 +100,23 @@ class DashboardPage(QtWidgets.QWidget):
 
         log_box = QtWidgets.QGroupBox("📝 Log gần đây (double-click để xem)")
         log_layout = QtWidgets.QVBoxLayout(log_box)
+
+        retention_row = QtWidgets.QHBoxLayout()
+        retention_row.addWidget(QtWidgets.QLabel("Giữ log:"))
+        self.retention_spin = QtWidgets.QSpinBox()
+        self.retention_spin.setRange(0, 3650)
+        self.retention_spin.setValue(h.get_log_retention_days())
+        self.retention_spin.setSuffix(" ngày (0 = không tự xoá)")
+        retention_row.addWidget(self.retention_spin)
+        save_retention_btn = QtWidgets.QPushButton("💾 Lưu")
+        save_retention_btn.clicked.connect(self._save_retention)
+        retention_row.addWidget(save_retention_btn)
+        cleanup_btn = QtWidgets.QPushButton("🧹 Dọn log cũ ngay")
+        cleanup_btn.clicked.connect(self._cleanup_now)
+        retention_row.addWidget(cleanup_btn)
+        retention_row.addStretch()
+        log_layout.addLayout(retention_row)
+
         self.log_list = QtWidgets.QListWidget()
         self.log_list.itemDoubleClicked.connect(self._open_log)
         log_layout.addWidget(self.log_list)
@@ -123,6 +145,17 @@ class DashboardPage(QtWidgets.QWidget):
                 item = QtWidgets.QListWidgetItem(f"{p.name}   ·   {mtime}")
                 item.setData(QtCore.Qt.UserRole, str(p))
                 self.log_list.addItem(item)
+
+    def _save_retention(self):
+        h.set_log_retention_days(self.retention_spin.value())
+        QtWidgets.QMessageBox.information(
+            self, "Đã lưu", f"Giữ log {self.retention_spin.value()} ngày (áp dụng từ lần dọn tiếp theo)."
+        )
+
+    def _cleanup_now(self):
+        deleted = h.cleanup_old_logs(self.retention_spin.value())
+        QtWidgets.QMessageBox.information(self, "Đã dọn", f"Đã xoá {len(deleted)} file log cũ.")
+        self.reload()
 
     def _open_log(self, item):
         path = item.data(QtCore.Qt.UserRole)
@@ -181,12 +214,37 @@ class BaseJobTab(QtWidgets.QWidget):
         log.setMinimumHeight(180)
         return log
 
-    def run_script(self, cmd, log_widget, run_btn, on_finished=None):
+    def run_script(self, cmd, log_widget, run_btn, on_finished=None, extra_env=None):
         run_btn.setEnabled(False)
         log_widget.clear()
-        self._runner = ProcessRunner(cmd, cwd=str(h.SCRIPTS_DIR))
+        self._runner = ProcessRunner(cmd, cwd=str(h.SCRIPTS_DIR), extra_env=extra_env)
         self._runner.output.connect(lambda s: self._append_log(log_widget, s))
         self._runner.finished.connect(lambda code: self._on_finished(code, run_btn, on_finished))
+        self._runner.start()
+
+    def run_script_queue(self, cmds, log_widget, run_btn, on_item_start=None, on_all_finished=None):
+        """Chạy tuần tự nhiều lệnh, nối log liên tục. cmds: list[(label, cmd_list)]."""
+        run_btn.setEnabled(False)
+        log_widget.clear()
+        self._queue = list(cmds)
+        self._queue_log = log_widget
+        self._queue_btn = run_btn
+        self._queue_on_item_start = on_item_start
+        self._queue_on_all_finished = on_all_finished
+        self._run_next_in_queue()
+
+    def _run_next_in_queue(self):
+        if not self._queue:
+            self._queue_btn.setEnabled(True)
+            if self._queue_on_all_finished:
+                self._queue_on_all_finished()
+            return
+        label, cmd = self._queue.pop(0)
+        if self._queue_on_item_start:
+            self._queue_on_item_start(label)
+        self._runner = ProcessRunner(cmd, cwd=str(h.SCRIPTS_DIR))
+        self._runner.output.connect(lambda s: self._append_log(self._queue_log, s))
+        self._runner.finished.connect(lambda code: self._run_next_in_queue())
         self._runner.start()
 
     def _append_log(self, log_widget, text):
@@ -200,6 +258,102 @@ class BaseJobTab(QtWidgets.QWidget):
         run_btn.setEnabled(True)
         if on_finished:
             on_finished(code)
+
+
+class EmailPickerWidget(QtWidgets.QWidget):
+    """Danh sách email đánh số, có ô tìm kiếm lọc nhanh — click 1 lần để tick chọn/bỏ chọn,
+    không cần giữ Cmd/Shift, chọn được nhiều dòng."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.search_edit = QtWidgets.QLineEdit()
+        self.search_edit.setPlaceholderText("🔍 Tìm email...")
+        self.search_edit.textChanged.connect(self._filter)
+        layout.addWidget(self.search_edit)
+
+        hint_row = QtWidgets.QHBoxLayout()
+        hint = QtWidgets.QLabel("Click vào 1 dòng để chọn/bỏ chọn — chọn được nhiều dòng.")
+        hint.setStyleSheet("color: #7a5800; font-size: 11px;")
+        hint_row.addWidget(hint)
+        hint_row.addStretch()
+        self.selected_count_label = QtWidgets.QPushButton("Đã chọn: 0 email")
+        self.selected_count_label.setCursor(QtCore.Qt.PointingHandCursor)
+        self.selected_count_label.setStyleSheet(
+            "QPushButton {"
+            "  color: #1a3a6e; font-weight: 700; font-size: 11px;"
+            "  background: #fff0a0; border: 1px solid #d4a017; border-radius: 4px;"
+            "  padding: 3px 10px; min-width: 0px;"
+            "}"
+            "QPushButton:hover { background: #ffe87a; }"
+        )
+        self.selected_count_label.setToolTipDuration(15000)
+        self.selected_count_label.clicked.connect(self._show_selected_popup)
+        hint_row.addWidget(self.selected_count_label)
+        layout.addLayout(hint_row)
+
+        self.list_widget = QtWidgets.QListWidget()
+        self.list_widget.setMaximumHeight(220)
+        self.list_widget.itemClicked.connect(self._toggle_item)
+        layout.addWidget(self.list_widget)
+
+        self._numbered = []
+        self._selected = set()
+        self._update_selected_label()
+
+    def set_emails(self, emails):
+        self._numbered = list(enumerate(sorted(emails), 1))
+        self._selected = set()
+        self._populate(self._numbered)
+        self._update_selected_label()
+
+    def _update_selected_label(self):
+        n = len(self._selected)
+        self.selected_count_label.setText(f"Đã chọn: {n} email")
+        if n:
+            tooltip = "\n".join(sorted(self._selected))
+        else:
+            tooltip = "Chưa chọn email nào"
+        self.selected_count_label.setToolTip(tooltip)
+
+    def _show_selected_popup(self):
+        if self._selected:
+            text = "\n".join(f"• {e}" for e in sorted(self._selected))
+        else:
+            text = "Chưa chọn email nào."
+        QtWidgets.QMessageBox.information(self, f"Đã chọn ({len(self._selected)} email)", text)
+
+    def _populate(self, numbered_list):
+        self.list_widget.clear()
+        for i, email_addr in numbered_list:
+            mark = "☑" if email_addr in self._selected else "☐"
+            item = QtWidgets.QListWidgetItem(f"{mark}  {i}. {email_addr}")
+            item.setData(QtCore.Qt.UserRole, email_addr)
+            item.setData(QtCore.Qt.UserRole + 1, i)
+            self.list_widget.addItem(item)
+
+    def _toggle_item(self, item):
+        email_addr = item.data(QtCore.Qt.UserRole)
+        idx = item.data(QtCore.Qt.UserRole + 1)
+        if email_addr in self._selected:
+            self._selected.discard(email_addr)
+        else:
+            self._selected.add(email_addr)
+        mark = "☑" if email_addr in self._selected else "☐"
+        item.setText(f"{mark}  {idx}. {email_addr}")
+        self._update_selected_label()
+
+    def _filter(self, text):
+        text = text.strip().lower()
+        if not text:
+            self._populate(self._numbered)
+        else:
+            self._populate([(i, e) for i, e in self._numbered if text in e.lower()])
+
+    def selected_emails(self):
+        return list(self._selected)
 
 
 class CheckAllTab(BaseJobTab):
@@ -219,9 +373,23 @@ class CheckAllTab(BaseJobTab):
         form.addRow("File account:", self.file_cb)
         layout.addLayout(form)
 
+        mail_row = QtWidgets.QHBoxLayout()
         self.send_cb = QtWidgets.QCheckBox("Gửi mail báo cáo sau khi xong")
         self.send_cb.setChecked(True)
-        layout.addWidget(self.send_cb)
+        self.send_cb.toggled.connect(self._on_send_toggled)
+        mail_row.addWidget(self.send_cb)
+
+        self.from_label = QtWidgets.QLabel("Từ:")
+        self.from_cb = QtWidgets.QComboBox()
+        self.from_cb.setEditable(True)
+        self.to_label = QtWidgets.QLabel("Đến:")
+        self.to_cb = QtWidgets.QComboBox()
+        self.to_cb.setEditable(True)
+        mail_row.addWidget(self.from_label)
+        mail_row.addWidget(self.from_cb, 1)
+        mail_row.addWidget(self.to_label)
+        mail_row.addWidget(self.to_cb, 1)
+        layout.addLayout(mail_row)
 
         self.run_btn = QtWidgets.QPushButton("▶️ Chạy")
         self.run_btn.setProperty("class", "primary")
@@ -254,6 +422,36 @@ class CheckAllTab(BaseJobTab):
             n = len(h.read_account_lines(p))
             self.file_cb.addItem(f"{p.name} ({n} account)")
 
+        self._from_accounts = h.list_sendable_accounts()
+        self._to_accounts = h.list_accounts_with_password()
+        default_from, default_to = h.get_mail_config_defaults()
+        self._default_from = default_from
+        self._default_to = default_to
+
+        for cb, accounts, default in [
+            (self.from_cb, self._from_accounts, default_from),
+            (self.to_cb, self._to_accounts, default_to),
+        ]:
+            cb.blockSignals(True)
+            cb.clear()
+            items = sorted(accounts.keys())
+            if default and default not in items:
+                items.insert(0, default)
+            cb.addItems(items)
+            if default:
+                idx = cb.findText(default)
+                cb.setCurrentIndex(idx if idx >= 0 else 0)
+            cb.blockSignals(False)
+
+        self._on_send_toggled()
+
+    def _on_send_toggled(self):
+        show = self.send_cb.isChecked()
+        self.from_label.setVisible(show)
+        self.from_cb.setVisible(show)
+        self.to_label.setVisible(show)
+        self.to_cb.setVisible(show)
+
     def _run(self):
         if not self._files or self.section_cb.count() == 0:
             QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa có section hoặc file account.")
@@ -262,9 +460,30 @@ class CheckAllTab(BaseJobTab):
         accounts_path = self._files[self.file_cb.currentIndex()]
         send_flag = "1" if self.send_cb.isChecked() else "0"
 
+        extra_env = None
+        if self.send_cb.isChecked():
+            from_email = self.from_cb.currentText().strip()
+            to_email = self.to_cb.currentText().strip()
+            # Chỉ ghi đè khi khác mặc định — giữ nguyên hành vi cũ (đọc mail_account.conf)
+            # nếu người dùng không đổi gì, tránh yêu cầu mật khẩu không cần thiết.
+            if from_email and to_email and (from_email != self._default_from or to_email != self._default_to):
+                from_pwd = self._from_accounts.get(from_email)
+                if not from_pwd:
+                    QtWidgets.QMessageBox.warning(
+                        self, "Không gửi được",
+                        f"Chưa có mật khẩu đã lưu cho '{from_email}' trong Quản lý Account — "
+                        "chỉ chọn được email Gmail đã có sẵn trong danh sách account làm người gửi.",
+                    )
+                    return
+                extra_env = {
+                    "MAIL_FROM_OVERRIDE": from_email,
+                    "MAIL_FROM_PASSWORD_OVERRIDE": from_pwd,
+                    "MAIL_TO_OVERRIDE": to_email,
+                }
+
         self._before = snapshot_mtimes(h.LOG_DIR)
         cmd = [h.PY_CMD, str(h.SCRIPT_CHECK_ALL), section, str(accounts_path), send_flag]
-        self.run_script(cmd, self.log, self.run_btn, on_finished=self._show_results)
+        self.run_script(cmd, self.log, self.run_btn, on_finished=self._show_results, extra_env=extra_env)
 
     def _show_results(self, code):
         new_files = newest_files_since(h.LOG_DIR, self._before, {".csv", ".txt"})
@@ -290,30 +509,17 @@ class SingleAccountTab(BaseJobTab):
         self.script_path = script_path
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(QtWidgets.QLabel(description))
+        layout.addWidget(QtWidgets.QLabel("Email (chọn 1 hoặc nhiều):"))
+
+        self.email_picker = EmailPickerWidget()
+        layout.addWidget(self.email_picker)
 
         form = QtWidgets.QFormLayout()
         form.setLabelAlignment(QtCore.Qt.AlignLeft)
         form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
         form.setHorizontalSpacing(16)
-        self.email_edit = QtWidgets.QLineEdit()
-        pwd_row = QtWidgets.QHBoxLayout()
-        self.pwd_edit = QtWidgets.QLineEdit()
-        self.pwd_edit.setEchoMode(QtWidgets.QLineEdit.Password)
-        self.show_pwd_btn = QtWidgets.QPushButton("👁")
-        self.show_pwd_btn.setFixedWidth(32)
-        self.show_pwd_btn.setCheckable(True)
-        self.show_pwd_btn.toggled.connect(
-            lambda on: self.pwd_edit.setEchoMode(
-                QtWidgets.QLineEdit.Normal if on else QtWidgets.QLineEdit.Password
-            )
-        )
-        pwd_row.addWidget(self.pwd_edit)
-        pwd_row.addWidget(self.show_pwd_btn)
         self.section_cb = QtWidgets.QComboBox()
-
-        form.addRow("Email:", self.email_edit)
-        form.addRow("App Password:", pwd_row)
         form.addRow("Section:", self.section_cb)
         layout.addLayout(form)
 
@@ -331,39 +537,81 @@ class SingleAccountTab(BaseJobTab):
         self.section_cb.clear()
         self.section_cb.addItems(h.job_sections(cfg))
 
+        # Email lấy từ danh sách account đã lưu (Quản lý Account) — không cần gõ tay App Password.
+        self._accounts = h.list_all_accounts()
+        self.email_picker.set_emails(self._accounts.keys())
+
     def _run(self):
-        email_addr = self.email_edit.text().strip()
-        pwd = self.pwd_edit.text()
+        selected = self.email_picker.selected_emails()
         section = self.section_cb.currentText()
-        if not email_addr or not pwd or not section:
-            QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Nhập đủ Email / Password / Section.")
+        if not selected or not section:
+            QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chọn ít nhất 1 email và Section.")
             return
-        cmd = [h.PY_CMD, str(self.script_path), email_addr, pwd, section]
-        self.run_script(cmd, self.log, self.run_btn)
+        cmds = []
+        for email_addr in selected:
+            pwd = self._accounts.get(email_addr, "")
+            cmd = [h.PY_CMD, str(self.script_path), email_addr, pwd, section]
+            cmds.append((email_addr, cmd))
+        self.run_script_queue(
+            cmds, self.log, self.run_btn,
+            on_item_start=lambda label: self._append_log(self.log, f"\n===== {label} =====\n"),
+        )
 
 
 class CleanMailTab(BaseJobTab):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._tmp_path = None
         layout = QtWidgets.QVBoxLayout(self)
 
         warn = QtWidgets.QLabel("⚠️ Thao tác này XOÁ VĨNH VIỄN email trong hộp thư, không thể hoàn tác.")
         warn.setStyleSheet("color: #b00000; font-weight: 700;")
         layout.addWidget(warn)
 
-        form = QtWidgets.QFormLayout()
-        form.setLabelAlignment(QtCore.Qt.AlignLeft)
-        form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
-        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
-        form.setHorizontalSpacing(16)
+        mode_row = QtWidgets.QHBoxLayout()
+        self.mode_file_rb = QtWidgets.QRadioButton("Theo file account")
+        self.mode_file_rb.setChecked(True)
+        self.mode_email_rb = QtWidgets.QRadioButton("Theo email tự chọn")
+        self.mode_file_rb.toggled.connect(self._on_mode_changed)
+        mode_row.addWidget(self.mode_file_rb)
+        mode_row.addWidget(self.mode_email_rb)
+        mode_row.addStretch()
+        layout.addLayout(mode_row)
+
+        # ---- Chế độ 1: theo file account ----
+        self.file_mode_widget = QtWidgets.QWidget()
+        file_form = QtWidgets.QFormLayout(self.file_mode_widget)
+        file_form.setContentsMargins(0, 0, 0, 0)
+        file_form.setLabelAlignment(QtCore.Qt.AlignLeft)
+        file_form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        file_form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        file_form.setHorizontalSpacing(16)
         self.file_cb = QtWidgets.QComboBox()
+        file_form.addRow("File account sẽ dọn:", self.file_cb)
+        layout.addWidget(self.file_mode_widget)
+
+        # ---- Chế độ 2: theo email tự chọn (đánh số, tìm kiếm, chọn nhiều) ----
+        self.email_mode_widget = QtWidgets.QWidget()
+        email_layout = QtWidgets.QVBoxLayout(self.email_mode_widget)
+        email_layout.setContentsMargins(0, 0, 0, 0)
+        email_layout.addWidget(QtWidgets.QLabel("Chọn email cần dọn:"))
+        self.email_picker = EmailPickerWidget()
+        email_layout.addWidget(self.email_picker)
+        layout.addWidget(self.email_mode_widget)
+        self.email_mode_widget.setVisible(False)
+
+        # ---- Số tháng — dùng chung cho cả 2 chế độ ----
+        months_form = QtWidgets.QFormLayout()
+        months_form.setLabelAlignment(QtCore.Qt.AlignLeft)
+        months_form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        months_form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        months_form.setHorizontalSpacing(16)
         self.months_spin = QtWidgets.QSpinBox()
         self.months_spin.setRange(0, 120)
         self.months_spin.setValue(12)
         self.months_spin.setSuffix(" tháng (0 = xoá TOÀN BỘ)")
-        form.addRow("File account sẽ dọn:", self.file_cb)
-        form.addRow("Xoá email cũ hơn:", self.months_spin)
-        layout.addLayout(form)
+        months_form.addRow("Xoá email cũ hơn:", self.months_spin)
+        layout.addLayout(months_form)
 
         self.confirm_edit = QtWidgets.QLineEdit()
         self.confirm_edit.setPlaceholderText('Gõ "XOA" để xác nhận')
@@ -385,6 +633,11 @@ class CleanMailTab(BaseJobTab):
 
         self.reload_options()
 
+    def _on_mode_changed(self):
+        is_file_mode = self.mode_file_rb.isChecked()
+        self.file_mode_widget.setVisible(is_file_mode)
+        self.email_mode_widget.setVisible(not is_file_mode)
+
     def reload_options(self):
         self.file_cb.clear()
         self._files = h.list_account_files()
@@ -392,16 +645,388 @@ class CleanMailTab(BaseJobTab):
             n = len(h.read_account_lines(p))
             self.file_cb.addItem(f"{p.name} ({n} account)")
 
+        self._accounts = h.list_all_accounts()
+        self.email_picker.set_emails(self._accounts.keys())
+
     def _update_enabled(self):
         ok = self.confirm_edit.text().strip().upper() == "XOA" and self.confirm_cb.isChecked()
         self.run_btn.setEnabled(ok)
 
     def _run(self):
+        if self.mode_file_rb.isChecked():
+            if not self._files:
+                return
+            fname = self._files[self.file_cb.currentIndex()].name
+            cmd = [h.PY_CMD, str(h.SCRIPT_CLEAN), fname, str(self.months_spin.value())]
+            self.run_script(cmd, self.log, self.run_btn)
+        else:
+            selected = self.email_picker.selected_emails()
+            if not selected:
+                QtWidgets.QMessageBox.warning(self, "Chưa chọn", "Chưa chọn email nào để dọn.")
+                return
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            tmp_name = f"_tmp_clean_{ts}.txt"
+            tmp_path = h.ACCOUNT_DIR / tmp_name
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                for email_addr in selected:
+                    f.write(f"{email_addr},{self._accounts.get(email_addr, '')}\n")
+            self._tmp_path = tmp_path
+            cmd = [h.PY_CMD, str(h.SCRIPT_CLEAN), tmp_name, str(self.months_spin.value())]
+            self.run_script(cmd, self.log, self.run_btn, on_finished=self._cleanup_tmp)
+
+    def _cleanup_tmp(self, code):
+        if self._tmp_path and self._tmp_path.exists():
+            self._tmp_path.unlink()
+        self._tmp_path = None
+
+
+class ScheduleTab(BaseJobTab):
+    """Lên lịch chạy tự động bằng launchd (macOS) — chạy đúng giờ kể cả khi tắt app."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtWidgets.QVBoxLayout(self)
+
+        info = QtWidgets.QLabel(
+            "⏰ Lên lịch chạy tự động bằng launchd (macOS) — chạy đúng giờ hàng ngày kể cả khi đã tắt app."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignLeft)
+        form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        form.setHorizontalSpacing(16)
+
+        self.job_type_cb = QtWidgets.QComboBox()
+        self.job_type_cb.addItems(["Check hàng loạt", "Dọn mail"])
+        self.job_type_cb.currentIndexChanged.connect(self._on_job_type_changed)
+        form.addRow("Loại job:", self.job_type_cb)
+
+        self.section_label = QtWidgets.QLabel("Section:")
+        self.section_cb = QtWidgets.QComboBox()
+        form.addRow(self.section_label, self.section_cb)
+
+        self.file_cb = QtWidgets.QComboBox()
+        form.addRow("File account:", self.file_cb)
+
+        self.send_cb = QtWidgets.QCheckBox("Gửi mail báo cáo sau khi xong")
+        self.send_cb.setChecked(True)
+        self.send_cb.toggled.connect(self._update_mail_visibility)
+        form.addRow("", self.send_cb)
+
+        self.mail_label = QtWidgets.QLabel("Gửi báo cáo:")
+        mail_row = QtWidgets.QHBoxLayout()
+        self.from_label = QtWidgets.QLabel("Từ:")
+        self.from_cb = QtWidgets.QComboBox()
+        self.from_cb.setEditable(True)
+        self.to_label = QtWidgets.QLabel("Đến:")
+        self.to_cb = QtWidgets.QComboBox()
+        self.to_cb.setEditable(True)
+        mail_row.addWidget(self.from_label)
+        mail_row.addWidget(self.from_cb, 1)
+        mail_row.addWidget(self.to_label)
+        mail_row.addWidget(self.to_cb, 1)
+        self.mail_widget = QtWidgets.QWidget()
+        self.mail_widget.setLayout(mail_row)
+        form.addRow(self.mail_label, self.mail_widget)
+
+        self.months_label = QtWidgets.QLabel("Xoá email cũ hơn:")
+        self.months_spin = QtWidgets.QSpinBox()
+        self.months_spin.setRange(0, 120)
+        self.months_spin.setValue(12)
+        self.months_spin.setSuffix(" tháng (0 = xoá TOÀN BỘ)")
+        form.addRow(self.months_label, self.months_spin)
+
+        self.repeat_cb = QtWidgets.QComboBox()
+        self.repeat_cb.addItems(["Hàng ngày", "Theo thứ trong tuần", "Theo ngày trong tháng"])
+        self.repeat_cb.currentIndexChanged.connect(self._on_repeat_changed)
+        form.addRow("Kiểu lặp:", self.repeat_cb)
+
+        self.weekday_label = QtWidgets.QLabel("Chọn thứ:")
+        weekday_row = QtWidgets.QHBoxLayout()
+        self.weekday_checks = {}
+        for wd, name in [(1, "T2"), (2, "T3"), (3, "T4"), (4, "T5"), (5, "T6"), (6, "T7"), (7, "CN")]:
+            cb = QtWidgets.QCheckBox(name)
+            self.weekday_checks[wd] = cb
+            weekday_row.addWidget(cb)
+        weekday_row.addStretch()
+        self.weekday_widget = QtWidgets.QWidget()
+        self.weekday_widget.setLayout(weekday_row)
+        form.addRow(self.weekday_label, self.weekday_widget)
+
+        self.day_of_month_label = QtWidgets.QLabel("Chọn ngày:")
+        day_grid = QtWidgets.QGridLayout()
+        day_grid.setSpacing(4)
+        self.day_of_month_checks = {}
+        for day in range(1, 32):
+            cb = QtWidgets.QCheckBox(str(day))
+            self.day_of_month_checks[day] = cb
+            row, col = divmod(day - 1, 7)
+            day_grid.addWidget(cb, row, col)
+        self.day_of_month_widget = QtWidgets.QWidget()
+        self.day_of_month_widget.setLayout(day_grid)
+        form.addRow(self.day_of_month_label, self.day_of_month_widget)
+
+        self.time_edit = QtWidgets.QTimeEdit()
+        self.time_edit.setDisplayFormat("HH:mm")
+        self.time_edit.setTime(QtCore.QTime(9, 0))
+        form.addRow("Giờ chạy:", self.time_edit)
+
+        layout.addLayout(form)
+
+        add_btn = QtWidgets.QPushButton("➕ Thêm lịch")
+        add_btn.clicked.connect(self._add_schedule)
+        layout.addWidget(add_btn)
+
+        layout.addWidget(QtWidgets.QLabel("📋 Các lịch đã đặt:"))
+        self.table = QtWidgets.QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Giờ chạy", "Loại job", "Chi tiết", "Thao tác"])
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QtWidgets.QHeaderView.Fixed)
+        self.table.setColumnWidth(3, 220)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.table.setMinimumHeight(220)
+        self.table.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.table.verticalHeader().setDefaultSectionSize(44)
+        layout.addWidget(self.table, 1)
+
+        self.log = self.make_log_panel()
+        layout.addWidget(self.log)
+
+        self._schedules = []
+        self._on_job_type_changed()
+        self._on_repeat_changed()
+        self.reload_options()
+
+    def _on_repeat_changed(self):
+        idx = self.repeat_cb.currentIndex()
+        is_weekly = idx == 1
+        is_monthly = idx == 2
+        self.weekday_label.setVisible(is_weekly)
+        self.weekday_widget.setVisible(is_weekly)
+        self.day_of_month_label.setVisible(is_monthly)
+        self.day_of_month_widget.setVisible(is_monthly)
+
+    def _on_job_type_changed(self):
+        is_check_all = self.job_type_cb.currentIndex() == 0
+        self.section_label.setVisible(is_check_all)
+        self.section_cb.setVisible(is_check_all)
+        self.send_cb.setVisible(is_check_all)
+        self.months_label.setVisible(not is_check_all)
+        self.months_spin.setVisible(not is_check_all)
+        self._update_mail_visibility()
+
+    def _update_mail_visibility(self):
+        show = self.job_type_cb.currentIndex() == 0 and self.send_cb.isChecked()
+        self.mail_label.setVisible(show)
+        self.mail_widget.setVisible(show)
+
+    def reload_options(self):
+        cfg = h.load_ini()
+        self.section_cb.clear()
+        self.section_cb.addItems(h.job_sections(cfg))
+
+        self.file_cb.clear()
+        self._files = h.list_account_files()
+        for p in self._files:
+            n = len(h.read_account_lines(p))
+            self.file_cb.addItem(f"{p.name} ({n} account)")
+
+        self._from_accounts = h.list_sendable_accounts()
+        self._to_accounts = h.list_accounts_with_password()
+        default_from, default_to = h.get_mail_config_defaults()
+        self._default_from = default_from
+        self._default_to = default_to
+        for cb, accounts, default in [
+            (self.from_cb, self._from_accounts, default_from),
+            (self.to_cb, self._to_accounts, default_to),
+        ]:
+            cb.blockSignals(True)
+            cb.clear()
+            items = sorted(accounts.keys())
+            if default and default not in items:
+                items.insert(0, default)
+            cb.addItems(items)
+            if default:
+                idx = cb.findText(default)
+                cb.setCurrentIndex(idx if idx >= 0 else 0)
+            cb.blockSignals(False)
+
+        self._schedules = h.load_schedules()
+        self._refresh_table()
+
+    WEEKDAY_NAMES = {1: "T2", 2: "T3", 3: "T4", 4: "T5", 5: "T6", 6: "T7", 7: "CN"}
+
+    def _repeat_text(self, sch):
+        repeat = sch.get("repeat", "daily")
+        if repeat == "weekly":
+            names = [self.WEEKDAY_NAMES.get(wd, str(wd)) for wd in sch.get("weekdays", [])]
+            return f"{sch['time']} ({','.join(names)})"
+        if repeat == "monthly":
+            days = ",".join(str(d) for d in sch.get("days_of_month", []))
+            return f"{sch['time']} (ngày {days} hàng tháng)"
+        return f"{sch['time']} (hàng ngày)"
+
+    def _refresh_table(self):
+        self.table.setRowCount(len(self._schedules))
+        for row, sch in enumerate(self._schedules):
+            self.table.setItem(row, 0, QtWidgets.QTableWidgetItem(self._repeat_text(sch)))
+            if sch["job_type"] == "check_all":
+                label = "Check hàng loạt"
+                p = sch["params"]
+                detail = f"Section {p['section']} — {p['file']}"
+                if p.get("send_flag") == "1":
+                    if sch.get("mail_from") and sch.get("mail_to"):
+                        detail += f" — gửi từ {sch['mail_from']} đến {sch['mail_to']}"
+                    else:
+                        detail += " — gửi mail báo cáo"
+            else:
+                label = "Dọn mail"
+                p = sch["params"]
+                months = int(p["months"])
+                detail = f"{p['file']} — " + (f"giữ {months} tháng" if months else "xoá TOÀN BỘ")
+            self.table.setItem(row, 1, QtWidgets.QTableWidgetItem(label))
+            self.table.setItem(row, 2, QtWidgets.QTableWidgetItem(detail))
+
+            action_widget = QtWidgets.QWidget()
+            action_layout = QtWidgets.QHBoxLayout(action_widget)
+            action_layout.setContentsMargins(4, 4, 4, 4)
+            action_layout.setSpacing(8)
+            run_now_btn = QtWidgets.QPushButton("▶️ Chạy thử")
+            run_now_btn.setStyleSheet("QPushButton { padding: 2px 8px; min-width: 0px; }")
+            run_now_btn.clicked.connect(lambda _, s=sch, b=run_now_btn: self._run_now(s, b))
+            del_btn = QtWidgets.QPushButton("🗑️ Xoá")
+            del_btn.setStyleSheet(
+                "QPushButton { background: #b00000; border-color: #7a0000; color: #ffffff;"
+                "  padding: 2px 8px; min-width: 0px; }"
+                "QPushButton:hover { background: #d40000; border-color: #ff8080; color: #ffe8e8; }"
+            )
+            del_btn.clicked.connect(lambda _, sid=sch["id"]: self._delete_schedule(sid))
+            action_layout.addWidget(run_now_btn)
+            action_layout.addWidget(del_btn)
+            self.table.setCellWidget(row, 3, action_widget)
+
+    def _schedule_signature(self, sch):
+        """Chữ ký để so trùng lịch: cùng giờ + kiểu lặp + loại job + chi tiết + FROM/TO y hệt."""
+        return (
+            sch.get("job_type"),
+            sch.get("time"),
+            sch.get("repeat", "daily"),
+            tuple(sorted(sch.get("weekdays", []))),
+            tuple(sorted(sch.get("days_of_month", []))),
+            tuple(sorted(sch.get("params", {}).items())),
+            sch.get("mail_from"),
+            sch.get("mail_to"),
+        )
+
+    def _add_schedule(self):
+        time_str = self.time_edit.time().toString("HH:mm")
         if not self._files:
+            QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa có file account nào.")
             return
         fname = self._files[self.file_cb.currentIndex()].name
-        cmd = [h.PY_CMD, str(h.SCRIPT_CLEAN), fname, str(self.months_spin.value())]
-        self.run_script(cmd, self.log, self.run_btn)
+
+        repeat_idx = self.repeat_cb.currentIndex()
+        repeat = ["daily", "weekly", "monthly"][repeat_idx]
+        extra = {"repeat": repeat}
+        if repeat == "weekly":
+            weekdays = [wd for wd, cb in self.weekday_checks.items() if cb.isChecked()]
+            if not weekdays:
+                QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa chọn thứ nào trong tuần.")
+                return
+            extra["weekdays"] = weekdays
+        elif repeat == "monthly":
+            days_of_month = [d for d, cb in self.day_of_month_checks.items() if cb.isChecked()]
+            if not days_of_month:
+                QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa chọn ngày nào trong tháng.")
+                return
+            extra["days_of_month"] = days_of_month
+
+        if self.job_type_cb.currentIndex() == 0:
+            if self.section_cb.count() == 0:
+                QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa có section nào.")
+                return
+            if self.send_cb.isChecked():
+                from_email = self.from_cb.currentText().strip()
+                to_email = self.to_cb.currentText().strip()
+                if from_email and to_email and (from_email != self._default_from or to_email != self._default_to):
+                    from_pwd = self._from_accounts.get(from_email)
+                    if not from_pwd:
+                        QtWidgets.QMessageBox.warning(
+                            self, "Không đặt được lịch",
+                            f"Chưa có mật khẩu đã lưu cho '{from_email}' — chỉ chọn được email Gmail "
+                            "đã có sẵn trong danh sách account làm người gửi.",
+                        )
+                        return
+                    extra["mail_from"] = from_email
+                    extra["mail_from_password"] = from_pwd
+                    extra["mail_to"] = to_email
+            schedule = {
+                "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                "job_type": "check_all",
+                "time": time_str,
+                **extra,
+                "params": {
+                    "section": self.section_cb.currentText(),
+                    "file": fname,
+                    "send_flag": "1" if self.send_cb.isChecked() else "0",
+                },
+            }
+        else:
+            schedule = {
+                "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+                "job_type": "clean",
+                "time": time_str,
+                **extra,
+                "params": {"file": fname, "months": self.months_spin.value()},
+            }
+
+        new_sig = self._schedule_signature(schedule)
+        if any(self._schedule_signature(s) == new_sig for s in self._schedules):
+            QtWidgets.QMessageBox.warning(
+                self, "Trùng lịch",
+                "Đã có lịch giống hệt (cùng giờ, kiểu lặp, loại job và chi tiết). Không thêm trùng.",
+            )
+            return
+
+        try:
+            h.install_schedule(schedule)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Lỗi", f"Không tạo được lịch chạy: {e}")
+            return
+
+        self._schedules.append(schedule)
+        h.save_schedules(self._schedules)
+        self._refresh_table()
+        QtWidgets.QMessageBox.information(self, "Đã thêm", f"Đã đặt lịch: {self._repeat_text(schedule)}.")
+
+    def _delete_schedule(self, schedule_id):
+        ret = QtWidgets.QMessageBox.question(
+            self, "Xác nhận xoá", "Xoá lịch chạy này?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+        )
+        if ret != QtWidgets.QMessageBox.Yes:
+            return
+        h.uninstall_schedule(schedule_id)
+        self._schedules = [s for s in self._schedules if s["id"] != schedule_id]
+        h.save_schedules(self._schedules)
+        self._refresh_table()
+
+    def _run_now(self, schedule, button):
+        cmd = h.build_schedule_command(schedule)
+        extra_env = None
+        if schedule.get("mail_from") and schedule.get("mail_from_password") and schedule.get("mail_to"):
+            extra_env = {
+                "MAIL_FROM_OVERRIDE": schedule["mail_from"],
+                "MAIL_FROM_PASSWORD_OVERRIDE": schedule["mail_from_password"],
+                "MAIL_TO_OVERRIDE": schedule["mail_to"],
+            }
+        self.run_script(cmd, self.log, button, extra_env=extra_env)
 
 
 class RunJobPage(QtWidgets.QWidget):
@@ -413,15 +1038,18 @@ class RunJobPage(QtWidgets.QWidget):
         layout.addWidget(title)
 
         self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setElideMode(QtCore.Qt.ElideNone)
         self.tab_all = CheckAllTab()
         self.tab_one = SingleAccountTab(h.SCRIPT_CHECK_ONE, "Chạy check_gmail_common.py — tìm mail khớp keyword cho 1 account.")
         self.tab_body = SingleAccountTab(h.SCRIPT_GETBODY, "Chạy getbody_mail_common.py — in toàn bộ nội dung mail khớp section.")
         self.tab_clean = CleanMailTab()
+        self.tab_schedule = ScheduleTab()
 
         self.tabs.addTab(self.tab_all, "📚 Check hàng loạt")
         self.tabs.addTab(self.tab_one, "✉️ Check 1 account")
         self.tabs.addTab(self.tab_body, "📄 Xem full mail")
         self.tabs.addTab(self.tab_clean, "🧹 Dọn mail (xoá)")
+        self.tabs.addTab(self.tab_schedule, "⏰ Lên lịch")
         layout.addWidget(self.tabs)
 
     def reload(self):
@@ -429,6 +1057,7 @@ class RunJobPage(QtWidgets.QWidget):
         self.tab_one.reload_options()
         self.tab_body.reload_options()
         self.tab_clean.reload_options()
+        self.tab_schedule.reload_options()
 
 
 # ============================================================
@@ -457,8 +1086,11 @@ class AccountsPage(QtWidgets.QWidget):
         self.new_name_edit.setPlaceholderText("accounts_gm_moi")
         self.new_file_btn = QtWidgets.QPushButton("➕ Tạo file")
         self.new_file_btn.clicked.connect(self._create_file)
+        self.del_file_btn = QtWidgets.QPushButton("🗑️ Xoá file")
+        self.del_file_btn.clicked.connect(self._delete_file)
         top.addWidget(self.new_name_edit)
         top.addWidget(self.new_file_btn)
+        top.addWidget(self.del_file_btn)
         layout.addLayout(top)
 
         self.show_pwd_cb = QtWidgets.QCheckBox("Hiện mật khẩu")
@@ -549,6 +1181,23 @@ class AccountsPage(QtWidgets.QWidget):
         self.table.setRowCount(0)
         self.warn_label.setText("")
         self._dirty = True
+
+    def _delete_file(self):
+        path = self._current_path()
+        if not path:
+            return
+        if path.exists():
+            ret = QtWidgets.QMessageBox.question(
+                self, "Xác nhận xoá",
+                f"Xoá vĩnh viễn file '{path.name}' ({len(h.read_account_lines(path))} account)?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if ret != QtWidgets.QMessageBox.Yes:
+                return
+            path.unlink()
+        self._dirty = False
+        self.reload()
 
     def _current_path(self):
         if not self._files or self.file_cb.currentIndex() < 0:

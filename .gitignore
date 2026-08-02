@@ -2,6 +2,7 @@
 /imap-checker/LOG*
 /imap-checker/SEND_MAIL*
 /imap-checker/account*
+/imap-checker/context/schedules.json
 /imap-checker/ui_qt/.venv*
 /imap-checker/ui_qt/Product
 __pycache__/

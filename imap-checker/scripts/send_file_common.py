@@ -24,16 +24,15 @@ else:  # macOS / Linux
     BASE_DIR = os.path.join(HOME, "MAC_WIN_PY", "imap-checker")
     PY_CMD = "python3"
 
+sys.path.insert(0, BASE_DIR)
+from common.providers import resolve_smtp_host
+
 # File cấu hình mail (KHÔNG COMMIT)
 MAIL_CONFIG_PATH = os.path.join(
     BASE_DIR,
     "SEND_MAIL",
     "mail_account.conf"
 )
-
-# ========= CẤU HÌNH SMTP =========
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
 
 MAIL_SUBJECT = "[AUTO] Ket qua check mail"
 MAIL_BODY = "File ket qua check mail duoc gui tu dong.\n\n-- Python Script"
@@ -43,6 +42,14 @@ MAIL_BODY = "File ket qua check mail duoc gui tu dong.\n\n-- Python Script"
 
 # ✅ MỚI: Load mail account từ file config (format Python)
 def load_mail_config():
+    # Cho phép UI ghi đè FROM/TO theo từng lần chạy qua biến môi trường —
+    # không set thì giữ nguyên hành vi cũ (đọc mail_account.conf).
+    from_override = os.environ.get("MAIL_FROM_OVERRIDE")
+    pwd_override = os.environ.get("MAIL_FROM_PASSWORD_OVERRIDE")
+    to_override = os.environ.get("MAIL_TO_OVERRIDE")
+    if from_override and pwd_override and to_override:
+        return from_override, pwd_override, [to_override]
+
     if not os.path.exists(MAIL_CONFIG_PATH):
         print(f"❌ Không tìm thấy file config: {MAIL_CONFIG_PATH}")
         sys.exit(1)
@@ -147,7 +154,8 @@ def send_mail(file_list):
         sys.exit(1)
 
     try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        smtp_server, smtp_port = resolve_smtp_host(SENDER_EMAIL)
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
             server.login(SENDER_EMAIL, APP_PASSWORD)
             server.send_message(msg)
