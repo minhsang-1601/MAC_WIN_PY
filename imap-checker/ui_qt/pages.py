@@ -87,28 +87,6 @@ class DashboardPage(QtWidgets.QWidget):
         top.addWidget(self.refresh_btn)
         layout.addLayout(top)
 
-        # ── 🔒 Bảo mật: đặt/đổi/bỏ mật khẩu + thời gian tự khoá ──
-        sec_box = QtWidgets.QGroupBox("🔒 Bảo mật màn hình")
-        sec = QtWidgets.QHBoxLayout(sec_box)
-        self.sec_status = QtWidgets.QLabel("")
-        sec.addWidget(self.sec_status)
-        sec.addStretch()
-        self.set_pwd_btn = QtWidgets.QPushButton("Đặt mật khẩu")
-        self.set_pwd_btn.clicked.connect(self._set_or_change_pwd)
-        sec.addWidget(self.set_pwd_btn)
-        self.clr_pwd_btn = QtWidgets.QPushButton("Bỏ mật khẩu")
-        self.clr_pwd_btn.clicked.connect(self._clear_pwd)
-        sec.addWidget(self.clr_pwd_btn)
-        sec.addSpacing(16)
-        sec.addWidget(QtWidgets.QLabel("Tự khoá sau:"))
-        self.autolock_spin = QtWidgets.QSpinBox()
-        self.autolock_spin.setRange(0, 240)
-        self.autolock_spin.setSuffix(" phút (0 = tắt)")
-        self.autolock_spin.setValue(h.get_auto_lock_minutes())
-        self.autolock_spin.editingFinished.connect(self._save_autolock)
-        sec.addWidget(self.autolock_spin)
-        layout.addWidget(sec_box)
-
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
 
         acc_box = QtWidgets.QGroupBox("👥 Danh sách gốc & Nhóm mail")
@@ -124,21 +102,6 @@ class DashboardPage(QtWidgets.QWidget):
         log_box = QtWidgets.QGroupBox("📝 Log gần đây (double-click để xem)")
         log_layout = QtWidgets.QVBoxLayout(log_box)
 
-        retention_row = QtWidgets.QHBoxLayout()
-        retention_row.addWidget(QtWidgets.QLabel("Giữ log:"))
-        self.retention_spin = QtWidgets.QSpinBox()
-        self.retention_spin.setRange(0, 3650)
-        self.retention_spin.setValue(h.get_log_retention_days())
-        self.retention_spin.setSuffix(" ngày (0 = không tự xoá)")
-        retention_row.addWidget(self.retention_spin)
-        save_retention_btn = QtWidgets.QPushButton("💾 Lưu")
-        save_retention_btn.clicked.connect(self._save_retention)
-        retention_row.addWidget(save_retention_btn)
-        cleanup_btn = QtWidgets.QPushButton("🧹 Dọn log cũ ngay")
-        cleanup_btn.clicked.connect(self._cleanup_now)
-        retention_row.addWidget(cleanup_btn)
-        retention_row.addStretch()
-        log_layout.addLayout(retention_row)
 
         self.log_list = QtWidgets.QListWidget()
         self.log_list.itemDoubleClicked.connect(self._open_log)
@@ -151,7 +114,6 @@ class DashboardPage(QtWidgets.QWidget):
         self.reload()
 
     def reload(self):
-        self._refresh_security()
         # Dòng đầu: danh sách gốc; các dòng sau: từng nhóm.
         master_n = len(h.master_accounts())
         groups = h.list_groups()
@@ -173,47 +135,6 @@ class DashboardPage(QtWidgets.QWidget):
                 item.setData(QtCore.Qt.UserRole, str(p))
                 self.log_list.addItem(item)
 
-    def _refresh_security(self):
-        on = h.has_screen_password()
-        self.sec_status.setText(
-            "🟢 Đang bật — mở app cần mật khẩu" if on
-            else "⚪ Chưa đặt — app mở tự do")
-        self.set_pwd_btn.setText("Đổi mật khẩu" if on else "Đặt mật khẩu")
-        self.clr_pwd_btn.setEnabled(on)
-        self.autolock_spin.blockSignals(True)
-        self.autolock_spin.setValue(h.get_auto_lock_minutes())
-        self.autolock_spin.blockSignals(False)
-
-    def _set_or_change_pwd(self):
-        from security import SetPasswordDialog
-        SetPasswordDialog(self).exec_()
-        self._refresh_security()
-
-    def _clear_pwd(self):
-        if not h.has_screen_password():
-            return
-        ret = QtWidgets.QMessageBox.question(
-            self, "Bỏ mật khẩu",
-            "Bỏ mật khẩu màn hình? App sẽ mở tự do, không cần nhập mật khẩu nữa.",
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            QtWidgets.QMessageBox.No)
-        if ret == QtWidgets.QMessageBox.Yes:
-            h.clear_screen_password()
-            self._refresh_security()
-
-    def _save_autolock(self):
-        h.set_auto_lock_minutes(self.autolock_spin.value())
-
-    def _save_retention(self):
-        h.set_log_retention_days(self.retention_spin.value())
-        QtWidgets.QMessageBox.information(
-            self, "Đã lưu", f"Giữ log {self.retention_spin.value()} ngày (áp dụng từ lần dọn tiếp theo)."
-        )
-
-    def _cleanup_now(self):
-        deleted = h.cleanup_old_logs(self.retention_spin.value())
-        QtWidgets.QMessageBox.information(self, "Đã dọn", f"Đã xoá {len(deleted)} file log cũ.")
-        self.reload()
 
     def _open_log(self, item):
         path = item.data(QtCore.Qt.UserRole)
@@ -1910,3 +1831,118 @@ class ConfigPage(QtWidgets.QWidget):
         self._cur_section = None
         self.cfg = h.load_ini()
         self._refresh_table()
+
+
+# ============================================================
+# TRANG 5: CÀI ĐẶT (bảo mật + log + thông tin)
+# ============================================================
+
+class SettingsPage(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QtWidgets.QVBoxLayout(self)
+        title = QtWidgets.QLabel("Cài đặt")
+        title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1a3a6e;")
+        layout.addWidget(title)
+
+        # ── 🔒 Bảo mật màn hình ──
+        sec_box = QtWidgets.QGroupBox("🔒 Bảo mật màn hình")
+        sv = QtWidgets.QVBoxLayout(sec_box)
+        self.sec_status = QtWidgets.QLabel("")
+        self.sec_status.setWordWrap(True)
+        sv.addWidget(self.sec_status)
+        row = QtWidgets.QHBoxLayout()
+        self.set_pwd_btn = QtWidgets.QPushButton("Đặt mật khẩu")
+        self.set_pwd_btn.clicked.connect(self._set_or_change_pwd)
+        self.clr_pwd_btn = QtWidgets.QPushButton("Bỏ mật khẩu")
+        self.clr_pwd_btn.clicked.connect(self._clear_pwd)
+        row.addWidget(self.set_pwd_btn)
+        row.addWidget(self.clr_pwd_btn)
+        row.addStretch()
+        row.addWidget(QtWidgets.QLabel("Tự khoá sau:"))
+        self.autolock_spin = QtWidgets.QSpinBox()
+        self.autolock_spin.setRange(0, 240)
+        self.autolock_spin.setSuffix(" phút (0 = tắt)")
+        self.autolock_spin.editingFinished.connect(self._save_autolock)
+        row.addWidget(self.autolock_spin)
+        sv.addLayout(row)
+        layout.addWidget(sec_box)
+
+        # ── 🗑 Dọn log ──
+        log_box = QtWidgets.QGroupBox("🗑 Log")
+        lv = QtWidgets.QHBoxLayout(log_box)
+        lv.addWidget(QtWidgets.QLabel("Giữ log:"))
+        self.retention_spin = QtWidgets.QSpinBox()
+        self.retention_spin.setRange(0, 3650)
+        self.retention_spin.setSuffix(" ngày (0 = không tự xoá)")
+        save_ret = QtWidgets.QPushButton("💾 Lưu")
+        save_ret.clicked.connect(self._save_retention)
+        cleanup = QtWidgets.QPushButton("🧹 Dọn log cũ ngay")
+        cleanup.clicked.connect(self._cleanup_now)
+        lv.addWidget(self.retention_spin)
+        lv.addWidget(save_ret)
+        lv.addWidget(cleanup)
+        lv.addStretch()
+        layout.addWidget(log_box)
+
+        # ── ℹ️ Thông tin ──
+        info_box = QtWidgets.QGroupBox("ℹ️ Thông tin")
+        iv = QtWidgets.QFormLayout(info_box)
+        self.info_base = QtWidgets.QLabel(str(h.BASE_DIR))
+        self.info_base.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.info_master = QtWidgets.QLabel("")
+        self.info_master.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.info_mail = QtWidgets.QLabel("")
+        iv.addRow("Thư mục dữ liệu:", self.info_base)
+        iv.addRow("Danh sách gốc:", self.info_master)
+        iv.addRow("Mail báo cáo (mặc định):", self.info_mail)
+        layout.addWidget(info_box)
+
+        layout.addStretch()
+        self.reload()
+
+    def reload(self):
+        on = h.has_screen_password()
+        self.sec_status.setText(
+            "🟢 Đang bật — mở app cần nhập mật khẩu." if on
+            else "⚪ Chưa đặt — app mở tự do, không cần mật khẩu.")
+        self.set_pwd_btn.setText("Đổi mật khẩu" if on else "Đặt mật khẩu")
+        self.clr_pwd_btn.setEnabled(on)
+        self.autolock_spin.blockSignals(True)
+        self.autolock_spin.setValue(h.get_auto_lock_minutes())
+        self.autolock_spin.blockSignals(False)
+        self.retention_spin.blockSignals(True)
+        self.retention_spin.setValue(h.get_log_retention_days())
+        self.retention_spin.blockSignals(False)
+        self.info_master.setText(h.get_master_file() or "(chưa chọn)")
+        sender, to = h.get_mail_config_defaults()
+        self.info_mail.setText(f"{sender or '(chưa có)'} → {to or '(chưa có)'}")
+
+    def _set_or_change_pwd(self):
+        from security import SetPasswordDialog
+        SetPasswordDialog(self).exec_()
+        self.reload()
+
+    def _clear_pwd(self):
+        if not h.has_screen_password():
+            return
+        ret = QtWidgets.QMessageBox.question(
+            self, "Bỏ mật khẩu",
+            "Bỏ mật khẩu màn hình? App sẽ mở tự do, không cần nhập mật khẩu nữa.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No)
+        if ret == QtWidgets.QMessageBox.Yes:
+            h.clear_screen_password()
+            self.reload()
+
+    def _save_autolock(self):
+        h.set_auto_lock_minutes(self.autolock_spin.value())
+
+    def _save_retention(self):
+        h.set_log_retention_days(self.retention_spin.value())
+        QtWidgets.QMessageBox.information(
+            self, "Đã lưu", f"Giữ log {self.retention_spin.value()} ngày.")
+
+    def _cleanup_now(self):
+        deleted = h.cleanup_old_logs(self.retention_spin.value())
+        QtWidgets.QMessageBox.information(self, "Đã dọn", f"Đã xoá {len(deleted)} file log cũ.")

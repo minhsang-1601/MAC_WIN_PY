@@ -4,13 +4,13 @@ import time
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 import helpers as h
-from pages import DashboardPage, RunJobPage, AccountsPage, ConfigPage
+from pages import DashboardPage, RunJobPage, AccountsPage, ConfigPage, SettingsPage
 from security import SetPasswordDialog, RecoveryDialog
 
 
 class MainWindow(QtWidgets.QMainWindow):
     # Chỉ số trang trong QStackedWidget
-    IDX_DASHBOARD, IDX_RUNJOB, IDX_ACCOUNTS, IDX_CONFIG, IDX_LOCK = 0, 1, 2, 3, 4
+    IDX_DASHBOARD, IDX_RUNJOB, IDX_ACCOUNTS, IDX_CONFIG, IDX_SETTINGS, IDX_LOCK = 0, 1, 2, 3, 4, 5
 
     def __init__(self):
         super().__init__()
@@ -25,6 +25,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.run_job_page = RunJobPage()
         self.accounts_page = AccountsPage()
         self.config_page = ConfigPage()
+        self.settings_page = SettingsPage()
         # Lưu danh sách gốc xong mà chưa có mật khẩu → bắt buộc đặt.
         self.accounts_page.master_saved.connect(self.enforce_password_after_save)
 
@@ -35,7 +36,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stack.addWidget(self._scroll(self.run_job_page))     # 1
         self.stack.addWidget(self._scroll(self.accounts_page))    # 2
         self.stack.addWidget(self._scroll(self.config_page))      # 3
-        self.stack.addWidget(self._build_lock_page())             # 4
+        self.stack.addWidget(self._scroll(self.settings_page))    # 4
+        self.stack.addWidget(self._build_lock_page())             # 5
         self.setCentralWidget(self.stack)
 
         # Cửa sổ khớp màn hình: không mở to hơn vùng làm việc thật.
@@ -93,7 +95,8 @@ class MainWindow(QtWidgets.QMainWindow):
             ("🏠 Tổng quan", self.IDX_DASHBOARD, self._on_show_dashboard),
             ("▶️ Chạy Job", self.IDX_RUNJOB, self._on_show_run_job),
             ("👤 Quản lý Account", self.IDX_ACCOUNTS, self._on_show_accounts),
-            ("⚙️ Cấu hình", self.IDX_CONFIG, self._on_show_config),
+            ("📑 Cấu hình", self.IDX_CONFIG, self._on_show_config),
+            ("⚙️ Cài đặt", self.IDX_SETTINGS, self._on_show_settings),
         ]
         self._nav_actions = []
         for label, index, handler in actions:
@@ -134,6 +137,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_show_config(self):
         self._select(self.IDX_CONFIG)
         self.config_page.reload()
+
+    def _on_show_settings(self):
+        self._select(self.IDX_SETTINGS)
+        self.settings_page.reload()
 
     # ============================================================
     # Khoá màn hình
