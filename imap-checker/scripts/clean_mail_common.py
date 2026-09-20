@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.paths import LOG_DIR, ACCOUNT_DIR
 from common.imap_util import open_imap
 from common.accounts import read_account_lines
+from common.groups import accounts_from_env
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 # Ngày hiện tại hiển thị: 2026-01-15
@@ -75,14 +76,19 @@ def main():
 
     file_name = sys.argv[1]
     months = int(sys.argv[2])
-    file_path = ACCOUNT_DIR / file_name
 
-    if not file_path.exists():
-        print(f"Loi: Khong tim thay file {file_path}")
-        return
-
-    accounts = read_account_lines(file_path)
-    print(f"Doc file: {file_name} ({len(accounts)} tai khoan)\n")
+    # Ưu tiên bộ lọc nhóm/email qua biến môi trường (IMAP_GROUP/IMAP_EMAILS):
+    # dọn đúng subset danh sách gốc, không cần file account riêng.
+    accounts = accounts_from_env()
+    if accounts is None:
+        file_path = ACCOUNT_DIR / file_name
+        if not file_path.exists():
+            print(f"Loi: Khong tim thay file {file_path}")
+            return
+        accounts = read_account_lines(file_path)
+        print(f"Doc file: {file_name} ({len(accounts)} tai khoan)\n")
+    else:
+        print(f"Doc theo nhom/email da chon ({len(accounts)} tai khoan)\n")
 
     for acc, pwd in accounts:
         xoa_mail(acc, pwd, months)

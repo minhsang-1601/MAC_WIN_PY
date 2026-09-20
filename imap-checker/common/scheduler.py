@@ -84,12 +84,16 @@ def install_schedule(schedule):
         "StandardErrorPath": str(LOG_DIR / f"schedule_{schedule['id']}.err.log"),
         "RunAtLoad": False,
     }
+    env = {}
+    if schedule.get("group"):
+        # Nhóm: script tự lấy subset từ danh sách gốc, không cần file riêng.
+        env["IMAP_GROUP"] = schedule["group"]
     if schedule.get("mail_from") and schedule.get("mail_from_password") and schedule.get("mail_to"):
-        plist["EnvironmentVariables"] = {
-            "MAIL_FROM_OVERRIDE": schedule["mail_from"],
-            "MAIL_FROM_PASSWORD_OVERRIDE": schedule["mail_from_password"],
-            "MAIL_TO_OVERRIDE": schedule["mail_to"],
-        }
+        env["MAIL_FROM_OVERRIDE"] = schedule["mail_from"]
+        env["MAIL_FROM_PASSWORD_OVERRIDE"] = schedule["mail_from_password"]
+        env["MAIL_TO_OVERRIDE"] = schedule["mail_to"]
+    if env:
+        plist["EnvironmentVariables"] = env
     with open(plist_path, "wb") as f:
         plistlib.dump(plist, f)
 

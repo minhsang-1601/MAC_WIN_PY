@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""Danh sách gốc (một file account) + các NHÓM mail (subset chọn từ gốc).
+"""Danh sách gốc (một file account DUY NHẤT) + các NHÓM mail (subset chọn từ gốc).
 
-Nhóm KHÔNG phải file người dùng tạo — chỉ là một lựa chọn email từ danh sách
-gốc, lưu trong ``context/groups.json``. Để launchd (chạy khi app đã tắt) vẫn
-đọc được, app tự "vật chất hoá" mỗi nhóm thành một file ẩn trong
-``account/_groups/<tên>.txt`` (email,password) mỗi khi lưu — người dùng không
-thấy/không quản lý các file này.
+Nguyên tắc: trên đĩa CHỈ tồn tại một file danh sách account (danh sách gốc).
+Nhóm KHÔNG sinh ra file nào — chỉ là một lựa chọn email lưu trong
+``context/groups.json``. Khi chạy job, truyền tên nhóm qua biến môi trường
+``IMAP_GROUP`` (hoặc danh sách email ad-hoc qua ``IMAP_EMAILS``) để script tự
+lọc account đọc từ danh sách gốc — kể cả khi launchd chạy lúc app đã tắt.
 """
 import json
-import re
+import os
 
-from common.paths import CONTEXT_DIR, ACCOUNT_DIR
-from common.accounts import read_account_lines, write_account_lines
+from common.paths import CONTEXT_DIR
+from common.accounts import read_account_lines
 
 GROUPS_PATH = CONTEXT_DIR / "groups.json"
-GROUPS_DIR = ACCOUNT_DIR / "_groups"
+
+# Tên biến môi trường để chọn nhóm / danh sách email khi chạy script.
+ENV_GROUP = "IMAP_GROUP"
+ENV_EMAILS = "IMAP_EMAILS"
 
 
 def load_groups():
@@ -61,39 +64,38 @@ def master_accounts():
     return result
 
 
-def _safe_name(name):
-    return re.sub(r"[^0-9A-Za-z_.-]+", "_", name.strip()) or "nhom"
+def group_emails(name):
+    """Danh sách email của một nhóm (theo groups.json). Không có → []."""
+    g = next((g for g in list_groups() if g.get("name") == name), None)
+    return list((g or {}).get("emails", []))
 
 
-def group_file_path(name):
-    return GROUPS_DIR / f"{_safe_name(name)}.txt"
+def accounts_for(group_name=None, emails=None):
+    """Trả về list[(email, password)] từ danh sách gốc, lọc theo:
+      - ``emails`` (danh sách email ad-hoc) nếu có; hoặc
+      - ``group_name`` (một nhóm đã lưu) nếu có; hoặc
+      - toàn bộ danh sách gốc nếu cả hai đều rỗng.
+    Email không có trong gốc bị bỏ qua (không có mật khẩu để dùng).
+    """
+    master = master_accounts()
+    if emails:
+        want = list(emails)
+    elif group_name:
+        want = group_emails(group_name)
+    else:
+        return list(master.items())
+    return [(e, master[e]) for e in want if e in master]
 
 
-def materialize_group(name):
-    """Ghi file ẩn (email,password) cho nhóm ``name`` từ danh sách gốc.
-    Trả về đường dẫn file (Path). Email không có trong gốc thì bỏ qua."""
-    accounts = master_accounts()
-    group = next((g for g in list_groups() if g.get("name") == name), None)
-    emails = (group or {}).get("emails", [])
-    rows = [(e, accounts[e]) for e in emails if e in accounts]
-    GROUPS_DIR.mkdir(parents=True, exist_ok=True)
-    path = group_file_path(name)
-    write_account_lines(path, rows)
-    return path
-
-
-def materialize_all():
-    """Sinh lại file ẩn cho MỌI nhóm (gọi sau khi lưu nhóm / lưu danh sách gốc)
-    và dọn file ẩn của nhóm đã xoá."""
-    GROUPS_DIR.mkdir(parents=True, exist_ok=True)
-    wanted = set()
-    for g in list_groups():
-        wanted.add(group_file_path(g["name"]).name)
-        materialize_group(g["name"])
-    # Dọn file ẩn thừa (nhóm đã xoá)
-    for p in GROUPS_DIR.iterdir():
-        if p.is_file() and p.name not in wanted:
-            try:
-                p.unlink()
-            except Exception:
-                pass
+def accounts_from_env():
+    """Đọc bộ lọc từ biến môi trường (dùng trong script CLI / launchd).
+    IMAP_EMAILS='a@x,b@y' ưu tiên; nếu không có thì IMAP_GROUP='Tên nhóm'.
+    Không set gì → None (nghĩa là dùng toàn bộ file như cũ)."""
+    raw_emails = (os.environ.get(ENV_EMAILS) or "").strip()
+    if raw_emails:
+        emails = [e.strip() for e in raw_emails.split(",") if e.strip()]
+        return accounts_for(emails=emails)
+    grp = (os.environ.get(ENV_GROUP) or "").strip()
+    if grp:
+        return accounts_for(group_name=grp)
+    return None

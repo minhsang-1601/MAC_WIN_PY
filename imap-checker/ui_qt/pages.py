@@ -460,15 +460,21 @@ class CheckAllTab(BaseJobTab):
             return
         section = self.section_cb.currentText()
         group = self._groups[self.file_cb.currentIndex()]
-        accounts_path = h.materialize_group(group["name"])
-        if not h.read_account_lines(accounts_path):
+        master = h.get_master_file()
+        if not master:
+            QtWidgets.QMessageBox.warning(
+                self, "Chưa có danh sách gốc",
+                "Chưa chọn danh sách gốc ở 👤 Quản lý Account.")
+            return
+        if not h.accounts_for(group_name=group["name"]):
             QtWidgets.QMessageBox.warning(
                 self, "Nhóm rỗng",
                 f"Nhóm '{group['name']}' không có email nào (hoặc danh sách gốc trống).")
             return
         send_flag = "1" if self.send_cb.isChecked() else "0"
 
-        extra_env = None
+        # Lọc theo nhóm qua biến môi trường — script tự lấy subset từ gốc.
+        extra_env = {h.ENV_GROUP: group["name"]}
         if self.send_cb.isChecked():
             from_email = self.from_cb.currentText().strip()
             to_email = self.to_cb.currentText().strip()
@@ -483,14 +489,14 @@ class CheckAllTab(BaseJobTab):
                         "chỉ chọn được email Gmail đã có sẵn trong danh sách account làm người gửi.",
                     )
                     return
-                extra_env = {
+                extra_env.update({
                     "MAIL_FROM_OVERRIDE": from_email,
                     "MAIL_FROM_PASSWORD_OVERRIDE": from_pwd,
                     "MAIL_TO_OVERRIDE": to_email,
-                }
+                })
 
         self._before = snapshot_mtimes(h.LOG_DIR)
-        cmd = [h.PY_CMD, str(h.SCRIPT_CHECK_ALL), section, str(accounts_path), send_flag]
+        cmd = [h.PY_CMD, str(h.SCRIPT_CHECK_ALL), section, str(master), send_flag]
         self.run_script(cmd, self.log, self.run_btn, on_finished=self._show_results, extra_env=extra_env)
 
     def _show_results(self, code):
@@ -545,8 +551,8 @@ class SingleAccountTab(BaseJobTab):
         self.section_cb.clear()
         self.section_cb.addItems(h.job_sections(cfg))
 
-        # Email lấy từ danh sách account đã lưu (Quản lý Account) — không cần gõ tay App Password.
-        self._accounts = h.list_all_accounts()
+        # Email lấy từ DANH SÁCH GỐC (một file duy nhất) — không cần gõ tay App Password.
+        self._accounts = h.master_accounts()
         self.email_picker.set_emails(self._accounts.keys())
 
     def _run(self):
@@ -652,7 +658,8 @@ class CleanMailTab(BaseJobTab):
         for g in self._groups:
             self.file_cb.addItem(f"{g['name']} ({len(g.get('emails', []))} email)")
 
-        self._accounts = h.list_all_accounts()
+        # Email tự chọn: lấy từ DANH SÁCH GỐC (một file duy nhất).
+        self._accounts = h.master_accounts()
         self.email_picker.set_emails(self._accounts.keys())
 
     def _update_enabled(self):
@@ -660,33 +667,28 @@ class CleanMailTab(BaseJobTab):
         self.run_btn.setEnabled(ok)
 
     def _run(self):
+        # Cả 2 chế độ đều truyền bộ lọc qua biến môi trường — KHÔNG tạo file phụ.
+        months = str(self.months_spin.value())
         if self.mode_file_rb.isChecked():
             if not self._groups:
                 QtWidgets.QMessageBox.warning(self, "Chưa có nhóm", "Chưa tạo nhóm mail nào.")
                 return
             group = self._groups[self.file_cb.currentIndex()]
-            path = h.materialize_group(group["name"])
-            if not h.read_account_lines(path):
+            if not h.accounts_for(group_name=group["name"]):
                 QtWidgets.QMessageBox.warning(
                     self, "Nhóm rỗng",
                     f"Nhóm '{group['name']}' không có email nào (hoặc danh sách gốc trống).")
                 return
-            cmd = [h.PY_CMD, str(h.SCRIPT_CLEAN), str(path), str(self.months_spin.value())]
-            self.run_script(cmd, self.log, self.run_btn)
+            extra_env = {h.ENV_GROUP: group["name"]}
         else:
             selected = self.email_picker.selected_emails()
             if not selected:
                 QtWidgets.QMessageBox.warning(self, "Chưa chọn", "Chưa chọn email nào để dọn.")
                 return
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            tmp_name = f"_tmp_clean_{ts}.txt"
-            tmp_path = h.ACCOUNT_DIR / tmp_name
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                for email_addr in selected:
-                    f.write(f"{email_addr},{self._accounts.get(email_addr, '')}\n")
-            self._tmp_path = tmp_path
-            cmd = [h.PY_CMD, str(h.SCRIPT_CLEAN), tmp_name, str(self.months_spin.value())]
-            self.run_script(cmd, self.log, self.run_btn, on_finished=self._cleanup_tmp)
+            extra_env = {h.ENV_EMAILS: ",".join(selected)}
+        # Tham số file chỉ là placeholder — script ưu tiên bộ lọc env.
+        cmd = [h.PY_CMD, str(h.SCRIPT_CLEAN), "-", months]
+        self.run_script(cmd, self.log, self.run_btn, extra_env=extra_env)
 
     def _cleanup_tmp(self, code):
         if self._tmp_path and self._tmp_path.exists():
@@ -954,11 +956,20 @@ class ScheduleTab(BaseJobTab):
             QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa có nhóm mail nào.")
             return
         _group = self._groups[self.file_cb.currentIndex()]
-        fname = str(h.materialize_group(_group["name"]))
+        gname = _group["name"]
+        if not h.get_master_file():
+            QtWidgets.QMessageBox.warning(
+                self, "Chưa có danh sách gốc",
+                "Chưa chọn danh sách gốc ở 👤 Quản lý Account.")
+            return
+        extra = {"group": gname}
+        # file = danh sách gốc; launchd chạy với env IMAP_GROUP nên script tự
+        # lấy subset của nhóm từ gốc (không cần file account riêng cho nhóm).
+        fname = str(h.get_master_file())
 
         repeat_idx = self.repeat_cb.currentIndex()
         repeat = ["daily", "weekly", "monthly"][repeat_idx]
-        extra = {"repeat": repeat}
+        extra["repeat"] = repeat
         if repeat == "weekly":
             weekdays = [wd for wd, cb in self.weekday_checks.items() if cb.isChecked()]
             if not weekdays:
@@ -1362,7 +1373,6 @@ class AccountsPage(QtWidgets.QWidget):
         rows = self._master_rows()
         h.write_account_lines(self._master_path, rows)
         h.set_master_file(self._master_path)
-        h.materialize_all()  # cập nhật file ẩn của các nhóm theo gốc mới
         self._dirty = False
         QtWidgets.QMessageBox.information(
             self, "Đã lưu", f"Đã lưu {len(rows)} account vào danh sách gốc.")
@@ -1456,7 +1466,6 @@ class AccountsPage(QtWidgets.QWidget):
                 g["name"] = new
         h.save_groups(data)
         self._cur_group = new
-        h.materialize_all()
         self._reload_groups()
 
     def _delete_group(self):
@@ -1473,7 +1482,6 @@ class AccountsPage(QtWidgets.QWidget):
         h.save_groups(data)
         self._cur_group = None
         self._group_dirty = False
-        h.materialize_all()
         self._reload_groups()
 
     def _save_group(self):
@@ -1490,7 +1498,6 @@ class AccountsPage(QtWidgets.QWidget):
             if g["name"] == self._cur_group:
                 g["emails"] = emails
         h.save_groups(data)
-        h.materialize_all()
         self._group_dirty = False
         QtWidgets.QMessageBox.information(
             self, "Đã lưu nhóm", f"Nhóm '{self._cur_group}': {len(emails)} email.")

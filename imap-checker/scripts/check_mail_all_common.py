@@ -16,6 +16,7 @@ from common.config_ini import load_ini
 from common.imap_util import open_imap
 from common.mailparse import decode_mime_words, get_email_body
 from common.accounts import read_account_lines
+from common.groups import accounts_from_env
 
 # Chuỗi hoá để phần code cũ (dùng os.path.join) khỏi phải đổi.
 BASE_DIR = str(BASE_DIR)
@@ -283,7 +284,12 @@ def main():
 
     error_count = 0
     empty_success_count = 0
-    accounts = read_accounts(accounts_path)
+    # Ưu tiên bộ lọc nhóm/email qua biến môi trường (IMAP_GROUP/IMAP_EMAILS):
+    # chạy đúng subset của danh sách gốc, KHÔNG cần file account riêng.
+    # Không set gì → đọc file account như cũ (tương thích ngược).
+    accounts = accounts_from_env()
+    if accounts is None:
+        accounts = read_accounts(accounts_path)
     all_data_rows = []
     stt = 1
     total_acc = len(accounts)
