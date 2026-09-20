@@ -13,26 +13,14 @@ import re
 import smtplib
 from email.message import EmailMessage
 from datetime import datetime
+from pathlib import Path
 
-# ---------- TỰ ĐỘNG XÁC ĐỊNH ĐƯỜNG DẪN ----------
-if os.name == 'nt':  # Windows
-    HOME = os.path.expanduser("~")
-    BASE_DIR = os.path.join(HOME, "MAC_WIN_PY", "imap-checker")
-    PY_CMD = "python"
-else:  # macOS / Linux
-    HOME = os.path.expanduser("~")
-    BASE_DIR = os.path.join(HOME, "MAC_WIN_PY", "imap-checker")
-    PY_CMD = "python3"
-
-sys.path.insert(0, BASE_DIR)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common.providers import resolve_smtp_host
+from common.paths import MAIL_CONFIG_PATH as _MAIL_CONFIG_PATH
 
 # File cấu hình mail (KHÔNG COMMIT)
-MAIL_CONFIG_PATH = os.path.join(
-    BASE_DIR,
-    "SEND_MAIL",
-    "mail_account.conf"
-)
+MAIL_CONFIG_PATH = str(_MAIL_CONFIG_PATH)
 
 MAIL_SUBJECT = "[AUTO] Ket qua check mail"
 MAIL_BODY = "File ket qua check mail duoc gui tu dong.\n\n-- Python Script"

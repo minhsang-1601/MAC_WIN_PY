@@ -4,19 +4,14 @@ import sys
 import time
 import subprocess
 from datetime import datetime
+from pathlib import Path
 
-# ---------- ĐƯỜNG DẪN ----------
-if os.name == 'nt':  # Windows
-    HOME = os.path.expanduser("~")
-    BASE_DIR = os.path.join(HOME, "MAC_WIN_PY", "imap-checker")
-    PY_CMD = "python"
-else:  # macOS / Linux
-    BASE_DIR = os.path.expanduser("~/MAC_WIN_PY/imap-checker")
-    PY_CMD = "python3"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.paths import PY_CMD, ACCOUNT_DIR as _ACCOUNT_DIR, LOG_DIR as _LOG_DIR, SCRIPT_CHECK_ALL
 
-SCRIPT_PATH = os.path.join(BASE_DIR, "scripts", "check_mail_all_common.py")
-ACCOUNT_DIR = os.path.join(BASE_DIR, "account")
-LOG_DIR = os.path.join(BASE_DIR, "LOG")
+SCRIPT_PATH = str(SCRIPT_CHECK_ALL)
+ACCOUNT_DIR = str(_ACCOUNT_DIR)
+LOG_DIR = str(_LOG_DIR)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # ---------- INPUT FILES ----------

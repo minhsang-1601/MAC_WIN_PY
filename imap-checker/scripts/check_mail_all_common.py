@@ -1,35 +1,28 @@
 #!/usr/bin/env python3
-import configparser
-import imaplib
 import email
-from email.header import decode_header, make_header
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
 import csv
 import os
 import sys
-import unicodedata
 import subprocess
 import time
 import random
+from pathlib import Path
 
-# ---------- TỰ ĐỘNG XÁC ĐỊNH ĐƯỜNG DẪN ----------
-if os.name == 'nt':  # Windows
-    HOME = os.path.expanduser("~")
-    BASE_DIR = os.path.join(HOME, "MAC_WIN_PY", "imap-checker")
-    PY_CMD = "python"
-else:  # macOS / Linux
-    BASE_DIR = os.path.expanduser("~/MAC_WIN_PY/imap-checker")
-    PY_CMD = "python3"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.paths import BASE_DIR, PY_CMD, CONFIG_PATH, LOG_DIR, SCRIPT_SEND
+from common.config_ini import load_ini
+from common.imap_util import open_imap
+from common.mailparse import decode_mime_words, get_email_body
+from common.accounts import read_account_lines
 
-CONFIG_PATH = os.path.join(BASE_DIR, "context", "config.ini")
+# Chuỗi hoá để phần code cũ (dùng os.path.join) khỏi phải đổi.
+BASE_DIR = str(BASE_DIR)
+CONFIG_PATH = str(CONFIG_PATH)
 ACCOUNTS_PATH_DEFAULT = os.path.join(BASE_DIR, "account", "accounts_gm.txt")
-RESULTS_DIR = os.path.join(BASE_DIR, "LOG")
-SEND_SCRIPT = os.path.join(BASE_DIR, "scripts", "send_file_common.py")
-# ---------------------------------------------
-
-sys.path.insert(0, BASE_DIR)
-from common.providers import resolve_imap_host
+RESULTS_DIR = str(LOG_DIR)
+SEND_SCRIPT = str(SCRIPT_SEND)
 
 
 def parse_args():
@@ -54,63 +47,15 @@ def parse_args():
 
 
 def read_accounts(path):
-    accounts = []
     if not os.path.exists(path):
         print(f"Không tìm thấy file accounts: {path}")
         sys.exit(1)
-    with open(path, "r", encoding="utf-8") as f:
-        for ln in f:
-            ln = ln.strip()
-            if not ln or ln.startswith("#"):
-                continue
-            if "," in ln:
-                email_addr, pwd = [x.strip() for x in ln.split(",", 1)]
-            else:
-                parts = ln.split()
-                if len(parts) < 2:
-                    continue
-                email_addr, pwd = parts[0], parts[1]
-            accounts.append((email_addr, pwd))
-    return accounts
-
-
-def decode_mime_words(s):
-    if not s:
-        return ""
-    try:
-        decoded = str(make_header(decode_header(s)))
-        return unicodedata.normalize("NFC", decoded)
-    except Exception:
-        return s
+    return read_account_lines(path)
 
 
 def safe_int(val, default):
     val = (val or "").strip()
     return int(val) if val.isdigit() else default
-
-
-def get_email_body(msg):
-    body = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition"))
-            if content_type == "text/plain" and "attachment" not in content_disposition:
-                try:
-                    payload = part.get_payload(decode=True)
-                    charset = part.get_content_charset() or "utf-8"
-                    body = payload.decode(charset, errors="ignore")
-                    break
-                except:
-                    pass
-    else:
-        try:
-            payload = msg.get_payload(decode=True)
-            charset = msg.get_content_charset() or "utf-8"
-            body = payload.decode(charset, errors="ignore")
-        except:
-            pass
-    return body
 
 
 # =================== SEARCH + FILTER ===================
@@ -327,8 +272,7 @@ def main():
     if not os.path.isabs(accounts_path):
         accounts_path = os.path.join(BASE_DIR, "account", accounts_path)
 
-    cfg = configparser.ConfigParser()
-    cfg.read(CONFIG_PATH, encoding="utf-8")
+    cfg = load_ini()
     if section not in cfg:
         print(f"Không thấy section [{section}] trong config.ini")
         sys.exit(1)
@@ -347,9 +291,7 @@ def main():
     for idx, (email_addr, pwd) in enumerate(accounts, 1):
         print(f"Processing {idx}/{total_acc}: {email_addr}", end="", flush=True)
         try:
-            host, port = resolve_imap_host(email_addr)
-            imap = imaplib.IMAP4_SSL(host, port)
-            imap.login(email_addr, pwd)
+            imap = open_imap(email_addr, pwd)
             matches = search_and_collect(imap, email_addr, cfg[section])
             print(f"\n[{email_addr}] -> Tìm thấy {len(matches)} mail.")
 

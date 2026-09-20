@@ -1,57 +1,22 @@
 #!/usr/bin/env python3
-# check_gmail_dky.py
+# Check 1 tài khoản: tìm mail khớp FROM + tiêu đề + từ khoá, in dòng khớp.
 
-import imaplib
 import email
-from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
 import sys
-import os
-import configparser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common.providers import resolve_imap_host
+from common.config_ini import load_ini
+from common.imap_util import open_imap
+from common.mailparse import decode_mime_words, get_email_body
 
-# ============ CAU HINH TU DONG (CHAY DUOC CA MAC & WIN) ============
-MAILBOX = "INBOX"
-
-home = Path.home()
-CONFIG_PATH = str(home / "MAC_WIN_PY" / "imap-checker" / "context" / "config.ini")
-# ===================================================================
-
-def decode_mime_words(s):
-    if not s:
-        return ""
-    parts = decode_header(s)
-    decoded = []
-    for part, enc in parts:
-        if isinstance(part, bytes):
-            decoded.append(part.decode(enc or 'utf-8', errors='replace'))
-        else:
-            decoded.append(part)
-    return ''.join(decoded)
-
-def get_text_from_message(msg):
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain" and 'attachment' not in str(part.get('Content-Disposition')):
-                payload = part.get_payload(decode=True) or b''
-                charset = part.get_content_charset() or 'utf-8'
-                return payload.decode(charset, errors='replace')
-    else:
-        payload = msg.get_payload(decode=True) or b''
-        charset = msg.get_content_charset() or 'utf-8'
-        return payload.decode(charset, errors='replace')
-    return ""
 
 def load_config(section_name=None):
-    config = configparser.ConfigParser()
-    config.read(CONFIG_PATH, encoding='utf-8')
-
+    config = load_ini()
     if not config.sections():
-        print(f"❌ Khong tim thay file config tai: {CONFIG_PATH}")
+        print(f"❌ Khong tim thay file config.")
         sys.exit(1)
 
     if section_name is None:
@@ -64,7 +29,7 @@ def load_config(section_name=None):
     section = config[section_name]
 
     return (
-        section.get("from", "").lower(),   # ✅ thêm FROM filter
+        section.get("from", "").lower(),   # ✅ FROM filter
         section.get("subject_title", ""),
         [k.strip() for k in section.get("keywords", "").split(",") if k.strip()],
         section.getint("recent_minutes", fallback=15),
@@ -73,21 +38,17 @@ def load_config(section_name=None):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python3 check_gmail_dky.py <email> <password> [section]")
+        print("Usage: python3 check_gmail_common.py <email> <password> [section]")
         sys.exit(2)
 
     email_user = sys.argv[1]
     password = sys.argv[2]
     section_name = sys.argv[3] if len(sys.argv) > 3 else None
 
-    # ✅ nhận thêm from_filter
     from_filter, subject_title, keywords, recent_minutes, max_results = load_config(section_name)
 
     try:
-        host, port = resolve_imap_host(email_user)
-        imap = imaplib.IMAP4_SSL(host, port)
-        imap.login(email_user, password)
-        imap.select(MAILBOX, readonly=True)
+        imap = open_imap(email_user, password, readonly=True)
     except Exception as e:
         print(f"❌ Loi IMAP: {e}")
         sys.exit(1)
@@ -136,7 +97,7 @@ def main():
             if subject_title and subject_title not in subject:
                 continue
 
-            body = get_text_from_message(msg)
+            body = get_email_body(msg)
             found_keyword_in_mail = False
             lines_matched = []
 

@@ -1,65 +1,24 @@
 #!/usr/bin/env python3
-# check_gmail_dky.py
+# Lấy toàn bộ BODY của mail khớp tiêu đề + từ khoá (để xem nội dung đầy đủ).
 
-import imaplib
 import email
-from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
 import sys
-import os
-import configparser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common.providers import resolve_imap_host
+from common.config_ini import load_ini
+from common.imap_util import open_imap
+from common.mailparse import decode_mime_words, get_email_body
 
-# ============ CAU HINH TU DONG (CHAY DUOC CA MAC & WIN) ============
-MAILBOX = "INBOX"
-
-home = Path.home()
-# Đảm bảo đường dẫn này chính xác trên máy của bạn
-CONFIG_PATH = str(home / "MAC_WIN_PY" / "imap-checker" / "context" / "config.ini")
-# ===================================================================
-
-def decode_mime_words(s):
-    if not s: return ""
-    parts = decode_header(s)
-    decoded = []
-    for part, enc in parts:
-        if isinstance(part, bytes):
-            decoded.append(part.decode(enc or 'utf-8', errors='replace'))
-        else:
-            decoded.append(part)
-    return ''.join(decoded)
-
-def get_text_from_message(msg):
-    """Lấy nội dung văn bản thuần túy từ email"""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get('Content-Disposition'))
-            if content_type == "text/plain" and 'attachment' not in content_disposition:
-                payload = part.get_payload(decode=True) or b''
-                charset = part.get_content_charset() or 'utf-8'
-                return payload.decode(charset, errors='replace')
-    else:
-        payload = msg.get_payload(decode=True) or b''
-        charset = msg.get_content_charset() or 'utf-8'
-        return payload.decode(charset, errors='replace')
-    return ""
 
 def load_config(section_name=None):
-    config = configparser.ConfigParser()
-    if not os.path.exists(CONFIG_PATH):
-        print(f"❌ Khong tim thay file config tai: {CONFIG_PATH}")
-        sys.exit(1)
-        
-    config.read(CONFIG_PATH, encoding='utf-8')
+    config = load_ini()
     if not config.sections():
         print(f"❌ File config trong hoặc sai định dạng.")
         sys.exit(1)
-        
+
     if section_name is None:
         section_name = config.sections()[0]
     if section_name not in config:
@@ -76,7 +35,7 @@ def load_config(section_name=None):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python3 check_gmail_dky.py <email> <password> [section]")
+        print("Usage: python3 getbody_mail_common.py <email> <password> [section]")
         sys.exit(2)
 
     email_user = sys.argv[1]
@@ -86,18 +45,14 @@ def main():
     subject_title, keywords, recent_minutes, max_results = load_config(section_name)
 
     try:
-        # Tham khảo tài liệu IMAP tại: https://docs.python.org
-        host, port = resolve_imap_host(email_user)
-        imap = imaplib.IMAP4_SSL(host, port)
-        imap.login(email_user, password)
-        imap.select(MAILBOX, readonly=True)
+        imap = open_imap(email_user, password, readonly=True)
     except Exception as e:
         print(f"❌ Loi IMAP: {e}")
         sys.exit(1)
 
     typ, data = imap.uid('search', None, 'ALL')
     uids = data[0].split()
-    
+
     if not uids:
         print("📢 Hom thu (Mailbox) hien dang trong.")
         imap.logout()
@@ -121,16 +76,16 @@ def main():
             if msg_dt.tzinfo is None: msg_dt = msg_dt.replace(tzinfo=timezone.utc)
 
             # Nếu mail cũ hơn thời gian quy định thì dừng
-            if msg_dt < cutoff: break 
+            if msg_dt < cutoff: break
 
             subject = decode_mime_words(msg.get('Subject', ''))
-            
+
             # Kiểm tra tiêu đề
-            if subject_title and subject_title not in subject: 
+            if subject_title and subject_title not in subject:
                 continue
 
-            body = get_text_from_message(msg)
-            
+            body = get_email_body(msg)
+
             # Kiểm tra từ khóa trong Body
             found_match = False
             if keywords:
@@ -144,7 +99,7 @@ def main():
                 print(f"==> Email {results_found} (UID {uid_str})")
                 print(f"Subject: {subject}")
                 print(f"Thời gian: {msg_dt}")
-                
+
                 print("*" * 15 + "***************" + "*" * 15)
                 print("-" * 15 + " NỘI DUNG BODY " + "-" * 15)
                 print("*" * 15 + "***************" + "*" * 15)
