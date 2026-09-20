@@ -21,6 +21,8 @@ python -m nuitka \
   --macos-create-app-bundle \
   --macos-app-name="IMAP Checker" \
   --macos-app-mode=gui \
+  --macos-app-icon=AppIcon.icns \
+  --include-data-files=AppIcon.png=AppIcon.png \
   --enable-plugin=pyqt5 \
   --nofollow-import-to=PyQt5.QtQuick \
   --nofollow-import-to=PyQt5.QtQml \

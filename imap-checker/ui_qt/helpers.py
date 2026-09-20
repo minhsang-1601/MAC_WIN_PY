@@ -7,6 +7,7 @@ các script CLI). File này chỉ:
 - giữ vài thứ CHỈ dùng cho UI: nhãn hiển thị field, nhãn provider, và cài đặt
   log-retention (đọc/ghi trong config.ini).
 """
+import hashlib
 import os
 import sys
 import time
@@ -39,6 +40,10 @@ from common.scheduler import (  # noqa: E402,F401
     build_calendar_interval, install_schedule, uninstall_schedule,
 )
 from common.paths import SCHEDULES_PATH  # noqa: E402,F401
+from common.groups import (  # noqa: E402,F401
+    load_groups, save_groups, get_master_file, set_master_file, list_groups,
+    master_accounts, materialize_group, materialize_all, group_file_path,
+)
 
 
 # ============================================================
@@ -108,3 +113,63 @@ def cleanup_old_logs(days=None):
             p.unlink()
             deleted.append(p.name)
     return deleted
+
+
+# ============================================================
+# Mật khẩu màn hình (cổng mở app + khoá màn hình)
+#   - Chỉ là CỔNG TRUY CẬP (SHA-256), KHÔNG mã hoá file account —
+#     launchd/script vẫn đọc account dạng thường để chạy nền.
+# ============================================================
+
+DEFAULT_AUTO_LOCK_MINUTES = 5
+
+
+def _hash_pwd(plain):
+    return hashlib.sha256(plain.encode("utf-8")).hexdigest()
+
+
+def has_screen_password():
+    cfg = load_ini()
+    return bool(cfg.has_option(UI_SETTINGS_SECTION, "screen_password")
+                and cfg[UI_SETTINGS_SECTION]["screen_password"].strip())
+
+
+def set_screen_password(plain):
+    cfg = load_ini()
+    if UI_SETTINGS_SECTION not in cfg:
+        cfg[UI_SETTINGS_SECTION] = {}
+    cfg[UI_SETTINGS_SECTION]["screen_password"] = _hash_pwd(plain)
+    save_ini(cfg)
+
+
+def verify_screen_password(plain):
+    cfg = load_ini()
+    if not cfg.has_option(UI_SETTINGS_SECTION, "screen_password"):
+        return False
+    return cfg[UI_SETTINGS_SECTION]["screen_password"].strip() == _hash_pwd(plain)
+
+
+def clear_screen_password():
+    cfg = load_ini()
+    if cfg.has_option(UI_SETTINGS_SECTION, "screen_password"):
+        cfg.remove_option(UI_SETTINGS_SECTION, "screen_password")
+        save_ini(cfg)
+
+
+def get_auto_lock_minutes():
+    cfg = load_ini()
+    if UI_SETTINGS_SECTION in cfg:
+        try:
+            return cfg[UI_SETTINGS_SECTION].getint(
+                "auto_lock_minutes", fallback=DEFAULT_AUTO_LOCK_MINUTES)
+        except ValueError:
+            return DEFAULT_AUTO_LOCK_MINUTES
+    return DEFAULT_AUTO_LOCK_MINUTES
+
+
+def set_auto_lock_minutes(minutes):
+    cfg = load_ini()
+    if UI_SETTINGS_SECTION not in cfg:
+        cfg[UI_SETTINGS_SECTION] = {}
+    cfg[UI_SETTINGS_SECTION]["auto_lock_minutes"] = str(int(minutes))
+    save_ini(cfg)

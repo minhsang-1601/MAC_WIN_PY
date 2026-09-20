@@ -88,10 +88,10 @@ class DashboardPage(QtWidgets.QWidget):
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
 
-        acc_box = QtWidgets.QGroupBox("📁 File account")
+        acc_box = QtWidgets.QGroupBox("👥 Danh sách gốc & Nhóm mail")
         acc_layout = QtWidgets.QVBoxLayout(acc_box)
         self.acc_table = QtWidgets.QTableWidget(0, 2)
-        self.acc_table.setHorizontalHeaderLabels(["File", "Số account"])
+        self.acc_table.setHorizontalHeaderLabels(["Tên", "Số email"])
         self.acc_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.acc_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self.acc_table.setAlternatingRowColors(True)
@@ -128,11 +128,14 @@ class DashboardPage(QtWidgets.QWidget):
         self.reload()
 
     def reload(self):
-        files = h.list_account_files()
-        self.acc_table.setRowCount(len(files))
-        for row, p in enumerate(files):
-            n = len(h.read_account_lines(p))
-            self.acc_table.setItem(row, 0, QtWidgets.QTableWidgetItem(p.name))
+        # Dòng đầu: danh sách gốc; các dòng sau: từng nhóm.
+        master_n = len(h.master_accounts())
+        groups = h.list_groups()
+        rows = [("📋 Danh sách gốc", master_n)]
+        rows += [(f"👥 {g['name']}", len(g.get("emails", []))) for g in groups]
+        self.acc_table.setRowCount(len(rows))
+        for row, (name, n) in enumerate(rows):
+            self.acc_table.setItem(row, 0, QtWidgets.QTableWidgetItem(name))
             count_item = QtWidgets.QTableWidgetItem(str(n))
             count_item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
             self.acc_table.setItem(row, 1, count_item)
@@ -370,7 +373,7 @@ class CheckAllTab(BaseJobTab):
         self.section_cb = QtWidgets.QComboBox()
         self.file_cb = QtWidgets.QComboBox()
         form.addRow("Section:", self.section_cb)
-        form.addRow("File account:", self.file_cb)
+        form.addRow("Nhóm mail:", self.file_cb)
         layout.addLayout(form)
 
         mail_row = QtWidgets.QHBoxLayout()
@@ -417,10 +420,9 @@ class CheckAllTab(BaseJobTab):
         self.section_cb.addItems(h.job_sections(cfg))
 
         self.file_cb.clear()
-        self._files = h.list_account_files()
-        for p in self._files:
-            n = len(h.read_account_lines(p))
-            self.file_cb.addItem(f"{p.name} ({n} account)")
+        self._groups = h.list_groups()
+        for g in self._groups:
+            self.file_cb.addItem(f"{g['name']} ({len(g.get('emails', []))} email)")
 
         self._from_accounts = h.list_sendable_accounts()
         self._to_accounts = h.list_accounts_with_password()
@@ -453,11 +455,17 @@ class CheckAllTab(BaseJobTab):
         self.to_cb.setVisible(show)
 
     def _run(self):
-        if not self._files or self.section_cb.count() == 0:
-            QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa có section hoặc file account.")
+        if not self._groups or self.section_cb.count() == 0:
+            QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa có section hoặc nhóm mail.")
             return
         section = self.section_cb.currentText()
-        accounts_path = self._files[self.file_cb.currentIndex()]
+        group = self._groups[self.file_cb.currentIndex()]
+        accounts_path = h.materialize_group(group["name"])
+        if not h.read_account_lines(accounts_path):
+            QtWidgets.QMessageBox.warning(
+                self, "Nhóm rỗng",
+                f"Nhóm '{group['name']}' không có email nào (hoặc danh sách gốc trống).")
+            return
         send_flag = "1" if self.send_cb.isChecked() else "0"
 
         extra_env = None
@@ -569,7 +577,7 @@ class CleanMailTab(BaseJobTab):
         layout.addWidget(warn)
 
         mode_row = QtWidgets.QHBoxLayout()
-        self.mode_file_rb = QtWidgets.QRadioButton("Theo file account")
+        self.mode_file_rb = QtWidgets.QRadioButton("Theo nhóm mail")
         self.mode_file_rb.setChecked(True)
         self.mode_email_rb = QtWidgets.QRadioButton("Theo email tự chọn")
         self.mode_file_rb.toggled.connect(self._on_mode_changed)
@@ -587,7 +595,7 @@ class CleanMailTab(BaseJobTab):
         file_form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
         file_form.setHorizontalSpacing(16)
         self.file_cb = QtWidgets.QComboBox()
-        file_form.addRow("File account sẽ dọn:", self.file_cb)
+        file_form.addRow("Nhóm mail sẽ dọn:", self.file_cb)
         layout.addWidget(self.file_mode_widget)
 
         # ---- Chế độ 2: theo email tự chọn (đánh số, tìm kiếm, chọn nhiều) ----
@@ -640,10 +648,9 @@ class CleanMailTab(BaseJobTab):
 
     def reload_options(self):
         self.file_cb.clear()
-        self._files = h.list_account_files()
-        for p in self._files:
-            n = len(h.read_account_lines(p))
-            self.file_cb.addItem(f"{p.name} ({n} account)")
+        self._groups = h.list_groups()
+        for g in self._groups:
+            self.file_cb.addItem(f"{g['name']} ({len(g.get('emails', []))} email)")
 
         self._accounts = h.list_all_accounts()
         self.email_picker.set_emails(self._accounts.keys())
@@ -654,10 +661,17 @@ class CleanMailTab(BaseJobTab):
 
     def _run(self):
         if self.mode_file_rb.isChecked():
-            if not self._files:
+            if not self._groups:
+                QtWidgets.QMessageBox.warning(self, "Chưa có nhóm", "Chưa tạo nhóm mail nào.")
                 return
-            fname = self._files[self.file_cb.currentIndex()].name
-            cmd = [h.PY_CMD, str(h.SCRIPT_CLEAN), fname, str(self.months_spin.value())]
+            group = self._groups[self.file_cb.currentIndex()]
+            path = h.materialize_group(group["name"])
+            if not h.read_account_lines(path):
+                QtWidgets.QMessageBox.warning(
+                    self, "Nhóm rỗng",
+                    f"Nhóm '{group['name']}' không có email nào (hoặc danh sách gốc trống).")
+                return
+            cmd = [h.PY_CMD, str(h.SCRIPT_CLEAN), str(path), str(self.months_spin.value())]
             self.run_script(cmd, self.log, self.run_btn)
         else:
             selected = self.email_picker.selected_emails()
@@ -709,15 +723,19 @@ class ScheduleTab(BaseJobTab):
         form.addRow(self.section_label, self.section_cb)
 
         self.file_cb = QtWidgets.QComboBox()
-        form.addRow("File account:", self.file_cb)
+        form.addRow("Nhóm mail:", self.file_cb)
 
         self.send_cb = QtWidgets.QCheckBox("Gửi mail báo cáo sau khi xong")
         self.send_cb.setChecked(True)
         self.send_cb.toggled.connect(self._update_mail_visibility)
         form.addRow("", self.send_cb)
+        layout.addLayout(form)
 
+        # Hàng "Từ/Đến" cần full-width nên add thẳng vào layout chính (giống CheckAllTab) —
+        # nhét vào trong QFormLayout như 1 field sẽ bị bó hẹp lại, không giãn theo cửa sổ.
         self.mail_label = QtWidgets.QLabel("Gửi báo cáo:")
         mail_row = QtWidgets.QHBoxLayout()
+        mail_row.addWidget(self.mail_label)
         self.from_label = QtWidgets.QLabel("Từ:")
         self.from_cb = QtWidgets.QComboBox()
         self.from_cb.setEditable(True)
@@ -728,21 +746,25 @@ class ScheduleTab(BaseJobTab):
         mail_row.addWidget(self.from_cb, 1)
         mail_row.addWidget(self.to_label)
         mail_row.addWidget(self.to_cb, 1)
-        self.mail_widget = QtWidgets.QWidget()
-        self.mail_widget.setLayout(mail_row)
-        form.addRow(self.mail_label, self.mail_widget)
+        layout.addLayout(mail_row)
+
+        form2 = QtWidgets.QFormLayout()
+        form2.setLabelAlignment(QtCore.Qt.AlignLeft)
+        form2.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        form2.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
+        form2.setHorizontalSpacing(16)
 
         self.months_label = QtWidgets.QLabel("Xoá email cũ hơn:")
         self.months_spin = QtWidgets.QSpinBox()
         self.months_spin.setRange(0, 120)
         self.months_spin.setValue(12)
         self.months_spin.setSuffix(" tháng (0 = xoá TOÀN BỘ)")
-        form.addRow(self.months_label, self.months_spin)
+        form2.addRow(self.months_label, self.months_spin)
 
         self.repeat_cb = QtWidgets.QComboBox()
         self.repeat_cb.addItems(["Hàng ngày", "Theo thứ trong tuần", "Theo ngày trong tháng"])
         self.repeat_cb.currentIndexChanged.connect(self._on_repeat_changed)
-        form.addRow("Kiểu lặp:", self.repeat_cb)
+        form2.addRow("Kiểu lặp:", self.repeat_cb)
 
         self.weekday_label = QtWidgets.QLabel("Chọn thứ:")
         weekday_row = QtWidgets.QHBoxLayout()
@@ -754,7 +776,7 @@ class ScheduleTab(BaseJobTab):
         weekday_row.addStretch()
         self.weekday_widget = QtWidgets.QWidget()
         self.weekday_widget.setLayout(weekday_row)
-        form.addRow(self.weekday_label, self.weekday_widget)
+        form2.addRow(self.weekday_label, self.weekday_widget)
 
         self.day_of_month_label = QtWidgets.QLabel("Chọn ngày:")
         day_grid = QtWidgets.QGridLayout()
@@ -767,14 +789,14 @@ class ScheduleTab(BaseJobTab):
             day_grid.addWidget(cb, row, col)
         self.day_of_month_widget = QtWidgets.QWidget()
         self.day_of_month_widget.setLayout(day_grid)
-        form.addRow(self.day_of_month_label, self.day_of_month_widget)
+        form2.addRow(self.day_of_month_label, self.day_of_month_widget)
 
         self.time_edit = QtWidgets.QTimeEdit()
         self.time_edit.setDisplayFormat("HH:mm")
         self.time_edit.setTime(QtCore.QTime(9, 0))
-        form.addRow("Giờ chạy:", self.time_edit)
+        form2.addRow("Giờ chạy:", self.time_edit)
 
-        layout.addLayout(form)
+        layout.addLayout(form2)
 
         add_btn = QtWidgets.QPushButton("➕ Thêm lịch")
         add_btn.clicked.connect(self._add_schedule)
@@ -824,7 +846,10 @@ class ScheduleTab(BaseJobTab):
     def _update_mail_visibility(self):
         show = self.job_type_cb.currentIndex() == 0 and self.send_cb.isChecked()
         self.mail_label.setVisible(show)
-        self.mail_widget.setVisible(show)
+        self.from_label.setVisible(show)
+        self.from_cb.setVisible(show)
+        self.to_label.setVisible(show)
+        self.to_cb.setVisible(show)
 
     def reload_options(self):
         cfg = h.load_ini()
@@ -832,10 +857,9 @@ class ScheduleTab(BaseJobTab):
         self.section_cb.addItems(h.job_sections(cfg))
 
         self.file_cb.clear()
-        self._files = h.list_account_files()
-        for p in self._files:
-            n = len(h.read_account_lines(p))
-            self.file_cb.addItem(f"{p.name} ({n} account)")
+        self._groups = h.list_groups()
+        for g in self._groups:
+            self.file_cb.addItem(f"{g['name']} ({len(g.get('emails', []))} email)")
 
         self._from_accounts = h.list_sendable_accounts()
         self._to_accounts = h.list_accounts_with_password()
@@ -926,10 +950,11 @@ class ScheduleTab(BaseJobTab):
 
     def _add_schedule(self):
         time_str = self.time_edit.time().toString("HH:mm")
-        if not self._files:
-            QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa có file account nào.")
+        if not self._groups:
+            QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chưa có nhóm mail nào.")
             return
-        fname = self._files[self.file_cb.currentIndex()].name
+        _group = self._groups[self.file_cb.currentIndex()]
+        fname = str(h.materialize_group(_group["name"]))
 
         repeat_idx = self.repeat_cb.currentIndex()
         repeat = ["daily", "weekly", "monthly"][repeat_idx]
@@ -1065,151 +1090,181 @@ class RunJobPage(QtWidgets.QWidget):
 # ============================================================
 
 class AccountsPage(QtWidgets.QWidget):
+    """Danh sách gốc (một file account) + các NHÓM mail chọn từ gốc.
+
+    - Danh sách gốc: file chọn bằng filepath, sửa/lưu tại đây. File trên đĩa
+      giữ 2 cột (email,password); cột Loại chỉ hiện trong bảng (tự điền).
+    - Nhóm: subset email chọn từ gốc (checkbox), không tạo file người dùng —
+      app tự sinh file ẩn để launchd chạy nền.
+    """
     COL_EMAIL, COL_PWD, COL_PROVIDER = 0, 1, 2
+    master_saved = QtCore.pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._dirty = False
-        self._last_index = 0
+        self._group_dirty = False
+        self._cur_group = None
+
         layout = QtWidgets.QVBoxLayout(self)
         title = QtWidgets.QLabel("Quản lý Account")
         title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1a3a6e;")
         layout.addWidget(title)
 
-        top = QtWidgets.QHBoxLayout()
-        self.file_cb = QtWidgets.QComboBox()
-        self.file_cb.currentIndexChanged.connect(self._on_file_changed)
-        top.addWidget(QtWidgets.QLabel("Chọn file:"))
-        top.addWidget(self.file_cb, 1)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        splitter.addWidget(self._build_master_panel())
+        splitter.addWidget(self._build_groups_panel())
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        layout.addWidget(splitter, 1)
 
-        self.new_name_edit = QtWidgets.QLineEdit()
-        self.new_name_edit.setPlaceholderText("accounts_gm_moi")
-        self.new_file_btn = QtWidgets.QPushButton("➕ Tạo file")
-        self.new_file_btn.clicked.connect(self._create_file)
-        self.del_file_btn = QtWidgets.QPushButton("🗑️ Xoá file")
-        self.del_file_btn.clicked.connect(self._delete_file)
-        top.addWidget(self.new_name_edit)
-        top.addWidget(self.new_file_btn)
-        top.addWidget(self.del_file_btn)
-        layout.addLayout(top)
+        self.reload()
+
+    # ----------------------------------------------------------
+    # Panel trái: DANH SÁCH GỐC
+    # ----------------------------------------------------------
+    def _build_master_panel(self):
+        box = QtWidgets.QGroupBox("📋 Danh sách gốc (1 file)")
+        v = QtWidgets.QVBoxLayout(box)
+
+        file_row = QtWidgets.QHBoxLayout()
+        self.master_path_lbl = QtWidgets.QLineEdit()
+        self.master_path_lbl.setReadOnly(True)
+        self.master_path_lbl.setPlaceholderText("Chưa chọn file gốc")
+        pick_btn = QtWidgets.QPushButton("📂 Chọn file")
+        pick_btn.clicked.connect(self._pick_master)
+        new_btn = QtWidgets.QPushButton("🆕 Tạo file mới")
+        new_btn.clicked.connect(self._new_master)
+        file_row.addWidget(QtWidgets.QLabel("File gốc:"))
+        file_row.addWidget(self.master_path_lbl, 1)
+        file_row.addWidget(pick_btn)
+        file_row.addWidget(new_btn)
+        v.addLayout(file_row)
 
         self.show_pwd_cb = QtWidgets.QCheckBox("Hiện mật khẩu")
         self.show_pwd_cb.toggled.connect(self._toggle_pwd)
-        layout.addWidget(self.show_pwd_cb)
+        v.addWidget(self.show_pwd_cb)
 
         self.table = QtWidgets.QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Email", "Password", "Provider"])
+        self.table.setHorizontalHeaderLabels(["Email", "App Password", "Loại"])
         self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         self.table.itemChanged.connect(self._on_item_changed)
-        layout.addWidget(self.table)
+        v.addWidget(self.table, 1)
 
         self.warn_label = QtWidgets.QLabel("")
         self.warn_label.setStyleSheet("color: #b00000; font-weight: 700;")
         self.warn_label.setWordWrap(True)
-        layout.addWidget(self.warn_label)
+        v.addWidget(self.warn_label)
 
         btn_row = QtWidgets.QHBoxLayout()
         add_row_btn = QtWidgets.QPushButton("➕ Thêm dòng")
         add_row_btn.clicked.connect(self._add_row)
-        del_row_btn = QtWidgets.QPushButton("🗑️ Xoá dòng đã chọn")
+        del_row_btn = QtWidgets.QPushButton("🗑️ Xoá dòng")
         del_row_btn.clicked.connect(self._delete_selected_rows)
-        save_btn = QtWidgets.QPushButton("💾 Lưu")
+        save_btn = QtWidgets.QPushButton("💾 Lưu danh sách gốc")
         save_btn.clicked.connect(self._save)
         btn_row.addWidget(add_row_btn)
         btn_row.addWidget(del_row_btn)
         btn_row.addStretch()
         btn_row.addWidget(save_btn)
-        layout.addLayout(btn_row)
+        v.addLayout(btn_row)
+        return box
 
-        self.reload()
+    # ----------------------------------------------------------
+    # Panel phải: NHÓM MAIL
+    # ----------------------------------------------------------
+    def _build_groups_panel(self):
+        box = QtWidgets.QGroupBox("👥 Nhóm mail (chọn từ danh sách gốc)")
+        v = QtWidgets.QVBoxLayout(box)
 
+        self.group_list = QtWidgets.QListWidget()
+        self.group_list.setMaximumHeight(140)
+        self.group_list.currentItemChanged.connect(self._on_group_selected)
+        v.addWidget(self.group_list)
+
+        g_btn = QtWidgets.QHBoxLayout()
+        new_g = QtWidgets.QPushButton("➕ Tạo nhóm")
+        new_g.clicked.connect(self._create_group)
+        ren_g = QtWidgets.QPushButton("✏️ Đổi tên")
+        ren_g.clicked.connect(self._rename_group)
+        del_g = QtWidgets.QPushButton("🗑️ Xoá nhóm")
+        del_g.clicked.connect(self._delete_group)
+        g_btn.addWidget(new_g)
+        g_btn.addWidget(ren_g)
+        g_btn.addWidget(del_g)
+        v.addLayout(g_btn)
+
+        self.member_hint = QtWidgets.QLabel("Chọn một nhóm để tích email thuộc nhóm.")
+        self.member_hint.setStyleSheet("color:#555;")
+        self.member_hint.setWordWrap(True)
+        v.addWidget(self.member_hint)
+
+        self.member_list = QtWidgets.QListWidget()
+        self.member_list.itemChanged.connect(self._on_member_toggled)
+        v.addWidget(self.member_list, 1)
+
+        save_g = QtWidgets.QPushButton("💾 Lưu nhóm")
+        save_g.clicked.connect(self._save_group)
+        v.addWidget(save_g, alignment=QtCore.Qt.AlignRight)
+        return box
+
+    # ----------------------------------------------------------
     def reload(self):
-        """Nạp lại danh sách file + bảng từ đĩa — bỏ qua toàn bộ nếu đang có
-        thay đổi chưa lưu (kể cả file mới tạo chưa bấm Lưu), tránh mất dữ liệu
-        khi chuyển trang đi rồi quay lại."""
-        if self._dirty:
+        if self._dirty or self._group_dirty:
             return
         h.ACCOUNT_DIR.mkdir(parents=True, exist_ok=True)
-        current = self.file_cb.currentText()
-        self._files = h.list_account_files()
-        self.file_cb.blockSignals(True)
-        self.file_cb.clear()
-        self.file_cb.addItems([p.name for p in self._files])
-        idx = self.file_cb.findText(current)
-        self.file_cb.setCurrentIndex(idx if idx >= 0 else 0)
-        self._last_index = self.file_cb.currentIndex()
-        self.file_cb.blockSignals(False)
+        self._master_path = h.get_master_file()
+        self.master_path_lbl.setText(self._master_path or "")
         self._load_table()
+        self._reload_groups()
 
     def has_unsaved_changes(self):
-        return self._dirty
+        return self._dirty or self._group_dirty
 
-    def _on_file_changed(self, index):
-        if self._dirty:
-            ret = QtWidgets.QMessageBox.question(
-                self, "Có thay đổi chưa lưu",
-                "File hiện tại có thay đổi chưa lưu. Đổi file sẽ mất thay đổi này.\n\nVẫn đổi?",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No,
-            )
-            if ret != QtWidgets.QMessageBox.Yes:
-                self.file_cb.blockSignals(True)
-                self.file_cb.setCurrentIndex(self._last_index)
-                self.file_cb.blockSignals(False)
-                return
-        self._last_index = index
+    # ---- Danh sách gốc: chọn/tạo file ----
+    def _pick_master(self):
+        if not self._confirm_discard_master():
+            return
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Chọn file danh sách gốc", str(h.ACCOUNT_DIR))
+        if not path:
+            return
+        self._master_path = path
+        self.master_path_lbl.setText(path)
+        h.set_master_file(path)
         self._dirty = False
         self._load_table()
 
-    def _create_file(self):
-        name = self.new_name_edit.text().strip()
-        if not name:
+    def _new_master(self):
+        if not self._confirm_discard_master():
             return
-        if any(p.name == name for p in self._files):
-            QtWidgets.QMessageBox.warning(self, "Trùng tên", "File đã tồn tại.")
-            return
-        # Chỉ thêm vào danh sách hiển thị — CHƯA tạo file thật trên đĩa.
-        # Bấm "Lưu" mới thật sự ghi file (write_account_lines tự tạo file mới).
-        self._files.append(h.ACCOUNT_DIR / name)
-        self.new_name_edit.clear()
-        self.file_cb.blockSignals(True)
-        self.file_cb.addItem(name)
-        self.file_cb.setCurrentIndex(self.file_cb.count() - 1)
-        self._last_index = self.file_cb.currentIndex()
-        self.file_cb.blockSignals(False)
-        self.table.setRowCount(0)
-        self.warn_label.setText("")
-        self._dirty = True
-
-    def _delete_file(self):
-        path = self._current_path()
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Tạo file danh sách gốc mới", str(h.ACCOUNT_DIR / "danh_sach_goc.txt"))
         if not path:
             return
-        if path.exists():
-            ret = QtWidgets.QMessageBox.question(
-                self, "Xác nhận xoá",
-                f"Xoá vĩnh viễn file '{path.name}' ({len(h.read_account_lines(path))} account)?",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No,
-            )
-            if ret != QtWidgets.QMessageBox.Yes:
-                return
-            path.unlink()
+        self._master_path = path
+        self.master_path_lbl.setText(path)
+        h.set_master_file(path)
+        self.table.setRowCount(0)
+        self.warn_label.setText("")
         self._dirty = False
-        self.reload()
 
-    def _current_path(self):
-        if not self._files or self.file_cb.currentIndex() < 0:
-            return None
-        return self._files[self.file_cb.currentIndex()]
+    def _confirm_discard_master(self):
+        if not self._dirty:
+            return True
+        ret = QtWidgets.QMessageBox.question(
+            self, "Có thay đổi chưa lưu",
+            "Danh sách gốc có thay đổi chưa lưu. Đổi file sẽ mất thay đổi này.\n\nVẫn đổi?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No)
+        return ret == QtWidgets.QMessageBox.Yes
 
     def _load_table(self):
-        path = self._current_path()
         self.table.blockSignals(True)
         self.table.setRowCount(0)
-        if path:
-            rows = h.read_account_lines(path)
+        if self._master_path:
+            rows = h.read_account_lines(self._master_path)
             self.table.setRowCount(len(rows))
             for r, (email_addr, pwd) in enumerate(rows):
                 self._set_row(r, email_addr, pwd)
@@ -1266,7 +1321,8 @@ class AccountsPage(QtWidgets.QWidget):
             if email_addr and h.get_provider(email_addr) is None:
                 bad.append(email_addr)
         if bad:
-            self.warn_label.setText(f"⚠️ {len(bad)} email chưa được hỗ trợ (chỉ Gmail/Yahoo): {', '.join(bad)}")
+            self.warn_label.setText(
+                f"⚠️ {len(bad)} email chưa được hỗ trợ (chỉ Gmail/Yahoo): {', '.join(bad)}")
         else:
             self.warn_label.setText("")
 
@@ -1284,10 +1340,7 @@ class AccountsPage(QtWidgets.QWidget):
             self.table.removeRow(r)
         self._dirty = True
 
-    def _save(self):
-        path = self._current_path()
-        if not path:
-            return
+    def _master_rows(self):
         rows = []
         for r in range(self.table.rowCount()):
             email_item = self.table.item(r, self.COL_EMAIL)
@@ -1296,10 +1349,153 @@ class AccountsPage(QtWidgets.QWidget):
             pwd = (pwd_item.data(QtCore.Qt.UserRole) if pwd_item else "") or ""
             if email_addr:
                 rows.append((email_addr, pwd))
-        h.write_account_lines(path, rows)
+        return rows
+
+    def _save(self):
+        if not self._master_path:
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Lưu danh sách gốc", str(h.ACCOUNT_DIR / "danh_sach_goc.txt"))
+            if not path:
+                return
+            self._master_path = path
+            self.master_path_lbl.setText(path)
+        rows = self._master_rows()
+        h.write_account_lines(self._master_path, rows)
+        h.set_master_file(self._master_path)
+        h.materialize_all()  # cập nhật file ẩn của các nhóm theo gốc mới
         self._dirty = False
-        QtWidgets.QMessageBox.information(self, "Đã lưu", f"Đã lưu {len(rows)} account vào {path.name}")
-        self.reload()
+        QtWidgets.QMessageBox.information(
+            self, "Đã lưu", f"Đã lưu {len(rows)} account vào danh sách gốc.")
+        self._reload_groups()
+        # Bắt buộc đặt mật khẩu màn hình sau khi lưu (nếu chưa có).
+        self.master_saved.emit()
+
+    # ---- Nhóm ----
+    def _reload_groups(self):
+        self.group_list.blockSignals(True)
+        cur = self._cur_group
+        self.group_list.clear()
+        for g in h.list_groups():
+            self.group_list.addItem(g["name"])
+        self.group_list.blockSignals(False)
+        # chọn lại nhóm cũ nếu còn
+        if cur:
+            items = self.group_list.findItems(cur, QtCore.Qt.MatchExactly)
+            if items:
+                self.group_list.setCurrentItem(items[0])
+                return
+        self._cur_group = None
+        self._load_members()
+
+    def _on_group_selected(self, cur, _prev):
+        if self._group_dirty and _prev is not None:
+            ret = QtWidgets.QMessageBox.question(
+                self, "Nhóm chưa lưu",
+                "Nhóm hiện tại có thay đổi chưa lưu. Đổi nhóm sẽ mất thay đổi.\n\nVẫn đổi?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No)
+            if ret != QtWidgets.QMessageBox.Yes:
+                self.group_list.blockSignals(True)
+                self.group_list.setCurrentItem(_prev)
+                self.group_list.blockSignals(False)
+                return
+        self._group_dirty = False
+        self._cur_group = cur.text() if cur else None
+        self._load_members()
+
+    def _load_members(self):
+        self.member_list.blockSignals(True)
+        self.member_list.clear()
+        if self._cur_group:
+            group = next((g for g in h.list_groups() if g["name"] == self._cur_group), None)
+            in_group = set((group or {}).get("emails", []))
+            for email_addr in h.master_accounts().keys():
+                it = QtWidgets.QListWidgetItem(email_addr)
+                it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
+                it.setCheckState(QtCore.Qt.Checked if email_addr in in_group else QtCore.Qt.Unchecked)
+                self.member_list.addItem(it)
+            n = self.member_list.count()
+            self.member_hint.setText(
+                f"Nhóm '{self._cur_group}': tích email thuộc nhóm ({n} email trong gốc)."
+                if n else "Danh sách gốc trống — thêm & lưu danh sách gốc trước.")
+        else:
+            self.member_hint.setText("Chọn một nhóm để tích email thuộc nhóm.")
+        self.member_list.blockSignals(False)
+
+    def _on_member_toggled(self, _item):
+        self._group_dirty = True
+
+    def _create_group(self):
+        name, ok = QtWidgets.QInputDialog.getText(self, "Tạo nhóm", "Tên nhóm:")
+        name = name.strip()
+        if not (ok and name):
+            return
+        data = h.load_groups()
+        if any(g["name"] == name for g in data["groups"]):
+            QtWidgets.QMessageBox.warning(self, "Trùng tên", "Nhóm đã tồn tại.")
+            return
+        data["groups"].append({"name": name, "emails": []})
+        h.save_groups(data)
+        self._cur_group = name
+        self._reload_groups()
+
+    def _rename_group(self):
+        if not self._cur_group:
+            return
+        new, ok = QtWidgets.QInputDialog.getText(
+            self, "Đổi tên nhóm", "Tên mới:", text=self._cur_group)
+        new = new.strip()
+        if not (ok and new) or new == self._cur_group:
+            return
+        data = h.load_groups()
+        if any(g["name"] == new for g in data["groups"]):
+            QtWidgets.QMessageBox.warning(self, "Trùng tên", "Nhóm đã tồn tại.")
+            return
+        for g in data["groups"]:
+            if g["name"] == self._cur_group:
+                g["name"] = new
+        h.save_groups(data)
+        self._cur_group = new
+        h.materialize_all()
+        self._reload_groups()
+
+    def _delete_group(self):
+        if not self._cur_group:
+            return
+        ret = QtWidgets.QMessageBox.question(
+            self, "Xoá nhóm", f"Xoá nhóm '{self._cur_group}'?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No)
+        if ret != QtWidgets.QMessageBox.Yes:
+            return
+        data = h.load_groups()
+        data["groups"] = [g for g in data["groups"] if g["name"] != self._cur_group]
+        h.save_groups(data)
+        self._cur_group = None
+        self._group_dirty = False
+        h.materialize_all()
+        self._reload_groups()
+
+    def _save_group(self):
+        if not self._cur_group:
+            QtWidgets.QMessageBox.information(self, "Chưa chọn nhóm", "Chọn hoặc tạo một nhóm trước.")
+            return
+        emails = []
+        for i in range(self.member_list.count()):
+            it = self.member_list.item(i)
+            if it.checkState() == QtCore.Qt.Checked:
+                emails.append(it.text())
+        data = h.load_groups()
+        for g in data["groups"]:
+            if g["name"] == self._cur_group:
+                g["emails"] = emails
+        h.save_groups(data)
+        h.materialize_all()
+        self._group_dirty = False
+        QtWidgets.QMessageBox.information(
+            self, "Đã lưu nhóm", f"Nhóm '{self._cur_group}': {len(emails)} email.")
+
+
 
 
 # ============================================================
