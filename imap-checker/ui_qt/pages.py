@@ -1253,6 +1253,16 @@ class AccountsPage(QtWidgets.QWidget):
         filter_row.addWidget(self.member_count_lbl)
         v.addLayout(filter_row)
 
+        sel_row = QtWidgets.QHBoxLayout()
+        all_btn = QtWidgets.QPushButton("☑ Chọn hết")
+        all_btn.clicked.connect(lambda: self._check_visible_members(True))
+        none_btn = QtWidgets.QPushButton("☐ Bỏ chọn")
+        none_btn.clicked.connect(lambda: self._check_visible_members(False))
+        sel_row.addWidget(all_btn)
+        sel_row.addWidget(none_btn)
+        sel_row.addStretch()
+        v.addLayout(sel_row)
+
         self.member_list = QtWidgets.QListWidget()
         self.member_list.itemChanged.connect(self._on_member_toggled)
         v.addWidget(self.member_list, 1)
@@ -1503,6 +1513,21 @@ class AccountsPage(QtWidgets.QWidget):
             1 for i in range(total)
             if self.member_list.item(i).checkState() == QtCore.Qt.Checked)
         self.member_count_lbl.setText(f"đã tích {checked}/{total}" if total else "")
+
+    def _check_visible_members(self, checked):
+        """Tích/bỏ tích các dòng ĐANG HIỆN (theo filter). Dòng đang ẩn giữ nguyên."""
+        state = QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked
+        changed = False
+        self.member_list.blockSignals(True)
+        for i in range(self.member_list.count()):
+            it = self.member_list.item(i)
+            if not it.isHidden() and it.checkState() != state:
+                it.setCheckState(state)
+                changed = True
+        self.member_list.blockSignals(False)
+        if changed:
+            self._group_dirty = True
+        self._update_member_count()
 
     def _on_member_toggled(self, _item):
         self._group_dirty = True
