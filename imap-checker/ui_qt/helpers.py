@@ -9,6 +9,8 @@ các script CLI). File này chỉ:
 """
 import hashlib
 import os
+import secrets
+import string
 import sys
 import time
 from pathlib import Path
@@ -154,6 +156,46 @@ def clear_screen_password():
     if cfg.has_option(UI_SETTINGS_SECTION, "screen_password"):
         cfg.remove_option(UI_SETTINGS_SECTION, "screen_password")
         save_ini(cfg)
+
+
+def _norm_recovery(s):
+    """Chuẩn hoá mã khôi phục để so khớp: bỏ khoảng trắng/gạch, viết hoa."""
+    return (s or "").strip().upper().replace(" ", "").replace("-", "")
+
+
+def _gen_recovery_plain():
+    """Sinh mã khôi phục 16 ký tự, hiển thị dạng XXXX-XXXX-XXXX-XXXX.
+    Bỏ ký tự dễ nhầm (0/O, 1/I) cho dễ chép tay."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    raw = "".join(secrets.choice(alphabet) for _ in range(16))
+    return "-".join(raw[i:i + 4] for i in range(0, 16, 4))
+
+
+def has_recovery_key():
+    cfg = load_ini()
+    return bool(cfg.has_option(UI_SETTINGS_SECTION, "recovery_key")
+                and cfg[UI_SETTINGS_SECTION]["recovery_key"].strip())
+
+
+def verify_recovery_key(plain):
+    cfg = load_ini()
+    if not cfg.has_option(UI_SETTINGS_SECTION, "recovery_key"):
+        return False
+    want = cfg[UI_SETTINGS_SECTION]["recovery_key"].strip()
+    return bool(want) and want == _hash_pwd(_norm_recovery(plain))
+
+
+def set_password_with_recovery(plain):
+    """Đặt mật khẩu MỚI + sinh mã khôi phục mới. Trả về mã khôi phục (bản rõ)
+    để hiển thị MỘT LẦN cho người dùng lưu lại. Mã cũ (nếu có) hết hiệu lực."""
+    recovery_plain = _gen_recovery_plain()
+    cfg = load_ini()
+    if UI_SETTINGS_SECTION not in cfg:
+        cfg[UI_SETTINGS_SECTION] = {}
+    cfg[UI_SETTINGS_SECTION]["screen_password"] = _hash_pwd(plain)
+    cfg[UI_SETTINGS_SECTION]["recovery_key"] = _hash_pwd(_norm_recovery(recovery_plain))
+    save_ini(cfg)
+    return recovery_plain
 
 
 def get_auto_lock_minutes():

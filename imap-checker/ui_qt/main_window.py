@@ -5,7 +5,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 import helpers as h
 from pages import DashboardPage, RunJobPage, AccountsPage, ConfigPage
-from security import SetPasswordDialog
+from security import SetPasswordDialog, RecoveryDialog
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -173,6 +173,13 @@ class MainWindow(QtWidgets.QMainWindow):
         unlock_btn.clicked.connect(self._try_unlock)
         box.addWidget(unlock_btn, alignment=QtCore.Qt.AlignHCenter)
 
+        forgot = QtWidgets.QPushButton("Quên mật khẩu?")
+        forgot.setFlat(True)
+        forgot.setStyleSheet("color:#1a3a6e; text-decoration:underline; border:none;")
+        forgot.setCursor(QtCore.Qt.PointingHandCursor)
+        forgot.clicked.connect(self._forgot_on_lock)
+        box.addWidget(forgot, alignment=QtCore.Qt.AlignHCenter)
+
         outer.addLayout(box)
         outer.addStretch()
         return page
@@ -202,6 +209,25 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self._lock_err.setText("Sai mật khẩu.")
             self._lock_pwd.clear()
+
+    def _forgot_on_lock(self):
+        if not h.has_recovery_key():
+            QtWidgets.QMessageBox.warning(
+                self, "Không có mã khôi phục",
+                "Mật khẩu đặt ở bản cũ chưa có mã khôi phục. Xoá dòng "
+                "screen_password trong context/config.ini để đặt lại.")
+            return
+        if RecoveryDialog(self).exec_():
+            self._try_unlock_after_recovery()
+
+    def _try_unlock_after_recovery(self):
+        self._locked = False
+        self._last_active = time.time()
+        self._toolbar.setVisible(True)
+        self._lock_pwd.clear()
+        self._lock_err.setText("")
+        self._select(self.IDX_DASHBOARD)
+        self.dashboard_page.reload()
 
     def _check_auto_lock(self):
         if self._locked or not h.has_screen_password():
