@@ -3,6 +3,7 @@
 import csv
 import os
 from datetime import datetime
+from pathlib import Path
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
@@ -1100,6 +1101,28 @@ class RunJobPage(QtWidgets.QWidget):
 # TRANG 3: QUẢN LÝ ACCOUNT
 # ============================================================
 
+class PasswordDelegate(QtWidgets.QStyledItemDelegate):
+    """Cột App Password: LUÔN sửa được. Khi chưa 'Hiện mật khẩu' thì che bằng
+    dấu chấm trong bảng VÀ ô nhập cũng che (echo Password) — nhưng vẫn gõ được.
+    Giá trị thật lưu ở text của ô (DisplayRole/EditRole)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.reveal = False
+
+    def displayText(self, value, locale):
+        s = value if value is not None else ""
+        if self.reveal or not s:
+            return s
+        return "•" * 8
+
+    def createEditor(self, parent, option, index):
+        editor = QtWidgets.QLineEdit(parent)
+        if not self.reveal:
+            editor.setEchoMode(QtWidgets.QLineEdit.Password)
+        return editor
+
+
 class AccountsPage(QtWidgets.QWidget):
     """Danh sách gốc (một file account) + các NHÓM mail chọn từ gốc.
 
@@ -1160,6 +1183,8 @@ class AccountsPage(QtWidgets.QWidget):
         self.table.setHorizontalHeaderLabels(["Email", "App Password", "Loại"])
         self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        self.pwd_delegate = PasswordDelegate(self.table)
+        self.table.setItemDelegateForColumn(self.COL_PWD, self.pwd_delegate)
         self.table.itemChanged.connect(self._on_item_changed)
         v.addWidget(self.table, 1)
 
@@ -1250,10 +1275,36 @@ class AccountsPage(QtWidgets.QWidget):
     def _new_master(self):
         if not self._confirm_discard_master():
             return
+        # Nguyên tắc "chỉ 1 file gốc": đang có file gốc cũ mà tạo file mới thì
+        # cảnh báo — hỏi có XOÁ file cũ đi không để khỏi tồn tại 2 file.
+        old = self._master_path
+        old_exists = old and Path(old).exists()
+        if old_exists:
+            ret = QtWidgets.QMessageBox.question(
+                self, "Đang có danh sách gốc cũ",
+                f"Danh sách gốc hiện tại:\n{old}\n\n"
+                "Tạo file mới sẽ chuyển sang dùng file mới. Bạn có muốn XOÁ file "
+                "gốc cũ để chỉ còn duy nhất 1 file không?\n\n"
+                "• Yes = xoá file cũ rồi tạo mới\n"
+                "• No  = giữ file cũ trên đĩa (app chỉ dùng file mới)\n"
+                "• Cancel = không tạo nữa",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Cancel,
+                QtWidgets.QMessageBox.No)
+            if ret == QtWidgets.QMessageBox.Cancel:
+                return
+            delete_old = ret == QtWidgets.QMessageBox.Yes
+        else:
+            delete_old = False
+
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Tạo file danh sách gốc mới", str(h.ACCOUNT_DIR / "danh_sach_goc.txt"))
         if not path:
             return
+        if delete_old and Path(old).resolve() != Path(path).resolve():
+            try:
+                Path(old).unlink()
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(self, "Không xoá được file cũ", str(e))
         self._master_path = path
         self.master_path_lbl.setText(path)
         h.set_master_file(path)
@@ -1286,12 +1337,8 @@ class AccountsPage(QtWidgets.QWidget):
         email_item = QtWidgets.QTableWidgetItem(email_addr)
         self.table.setItem(row, self.COL_EMAIL, email_item)
 
-        pwd_item = QtWidgets.QTableWidgetItem()
-        pwd_item.setData(QtCore.Qt.UserRole, pwd)
-        show = self.show_pwd_cb.isChecked()
-        pwd_item.setText(pwd if show else "•" * 8)
-        if not show:
-            pwd_item.setFlags(pwd_item.flags() & ~QtCore.Qt.ItemIsEditable)
+        # Giá trị thật lưu thẳng ở text; PasswordDelegate lo việc che khi hiển thị.
+        pwd_item = QtWidgets.QTableWidgetItem(pwd)
         self.table.setItem(row, self.COL_PWD, pwd_item)
 
         prov_item = QtWidgets.QTableWidgetItem(h.provider_label(email_addr))
@@ -1299,30 +1346,18 @@ class AccountsPage(QtWidgets.QWidget):
         self.table.setItem(row, self.COL_PROVIDER, prov_item)
 
     def _toggle_pwd(self):
-        show = self.show_pwd_cb.isChecked()
-        self.table.blockSignals(True)
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, self.COL_PWD)
-            if item is None:
-                continue
-            real = item.data(QtCore.Qt.UserRole) or ""
-            item.setText(real if show else "•" * 8)
-            if show:
-                item.setFlags(item.flags() | QtCore.Qt.ItemIsEditable)
-            else:
-                item.setFlags(item.flags() & ~QtCore.Qt.ItemIsEditable)
-        self.table.blockSignals(False)
+        # Chỉ đổi cách HIỂN THỊ (che/không) — giá trị thật giữ nguyên ở text.
+        self.pwd_delegate.reveal = self.show_pwd_cb.isChecked()
+        self.table.viewport().update()
 
     def _on_item_changed(self, item):
         self._dirty = True
-        row = item.row()
         if item.column() == self.COL_EMAIL:
+            row = item.row()
             prov_item = self.table.item(row, self.COL_PROVIDER)
             if prov_item:
                 prov_item.setText(h.provider_label(item.text().strip()))
             self._refresh_warning()
-        elif item.column() == self.COL_PWD and self.show_pwd_cb.isChecked():
-            item.setData(QtCore.Qt.UserRole, item.text())
 
     def _refresh_warning(self):
         bad = []
@@ -1357,7 +1392,7 @@ class AccountsPage(QtWidgets.QWidget):
             email_item = self.table.item(r, self.COL_EMAIL)
             pwd_item = self.table.item(r, self.COL_PWD)
             email_addr = email_item.text().strip() if email_item else ""
-            pwd = (pwd_item.data(QtCore.Qt.UserRole) if pwd_item else "") or ""
+            pwd = (pwd_item.text() if pwd_item else "") or ""
             if email_addr:
                 rows.append((email_addr, pwd))
         return rows
