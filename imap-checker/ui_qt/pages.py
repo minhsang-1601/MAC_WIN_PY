@@ -1217,9 +1217,20 @@ class AccountsPage(QtWidgets.QWidget):
         box = QtWidgets.QGroupBox("👥 Nhóm mail (chọn từ danh sách gốc)")
         v = QtWidgets.QVBoxLayout(box)
 
-        self.group_list = QtWidgets.QListWidget()
-        self.group_list.setMaximumHeight(140)
-        self.group_list.currentItemChanged.connect(self._on_group_selected)
+        # Danh sách nhóm kiểu BẢNG: STT · Tên nhóm · Số email (giống Dashboard).
+        self.group_list = QtWidgets.QTableWidget(0, 3)
+        self.group_list.setHorizontalHeaderLabels(["STT", "Tên nhóm", "Số email"])
+        self.group_list.setMaximumHeight(170)
+        self.group_list.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.group_list.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.group_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.group_list.setAlternatingRowColors(True)
+        self.group_list.verticalHeader().setVisible(False)
+        ghdr = self.group_list.horizontalHeader()
+        ghdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)  # STT
+        ghdr.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)           # Tên nhóm
+        ghdr.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)  # Số email
+        self.group_list.currentCellChanged.connect(self._on_group_row_changed)
         v.addWidget(self.group_list)
 
         g_btn = QtWidgets.QHBoxLayout()
@@ -1446,24 +1457,40 @@ class AccountsPage(QtWidgets.QWidget):
     def _reload_groups(self):
         self.group_list.blockSignals(True)
         cur = self._cur_group
-        self.group_list.clear()
-        # Hiển thị có STT ("1. Tên"); tên THẬT lưu ở UserRole để tra cứu.
-        for i, g in enumerate(h.list_groups(), 1):
-            it = QtWidgets.QListWidgetItem(f"{i}. {g['name']}")
-            it.setData(QtCore.Qt.UserRole, g["name"])
-            self.group_list.addItem(it)
+        self.group_list.setRowCount(0)
+        # Bảng STT · Tên nhóm · Số email; tên THẬT lưu ở UserRole cột Tên.
+        groups = h.list_groups()
+        self.group_list.setRowCount(len(groups))
+        for i, g in enumerate(groups):
+            stt = QtWidgets.QTableWidgetItem(str(i + 1))
+            stt.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.group_list.setItem(i, 0, stt)
+            name_item = QtWidgets.QTableWidgetItem(f"👥 {g['name']}")
+            name_item.setData(QtCore.Qt.UserRole, g["name"])
+            self.group_list.setItem(i, 1, name_item)
+            cnt = QtWidgets.QTableWidgetItem(str(len(g.get("emails", []))))
+            cnt.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            self.group_list.setItem(i, 2, cnt)
         self.group_list.blockSignals(False)
         # chọn lại nhóm cũ nếu còn (khớp theo tên thật ở UserRole)
         if cur:
-            for i in range(self.group_list.count()):
-                if self.group_list.item(i).data(QtCore.Qt.UserRole) == cur:
-                    self.group_list.setCurrentItem(self.group_list.item(i))
+            for i in range(self.group_list.rowCount()):
+                if self.group_list.item(i, 1).data(QtCore.Qt.UserRole) == cur:
+                    self.group_list.selectRow(i)
                     return
         self._cur_group = None
         self._load_members()
 
-    def _on_group_selected(self, cur, _prev):
-        if self._group_dirty and _prev is not None:
+    def _group_name_at(self, row):
+        if row is None or row < 0:
+            return None
+        item = self.group_list.item(row, 1)
+        return item.data(QtCore.Qt.UserRole) if item else None
+
+    def _on_group_row_changed(self, cur_row, _cur_col, prev_row, _prev_col):
+        if cur_row == prev_row:
+            return
+        if self._group_dirty and prev_row is not None and prev_row >= 0:
             ret = QtWidgets.QMessageBox.question(
                 self, "Nhóm chưa lưu",
                 "Nhóm hiện tại có thay đổi chưa lưu. Đổi nhóm sẽ mất thay đổi.\n\nVẫn đổi?",
@@ -1471,11 +1498,11 @@ class AccountsPage(QtWidgets.QWidget):
                 QtWidgets.QMessageBox.No)
             if ret != QtWidgets.QMessageBox.Yes:
                 self.group_list.blockSignals(True)
-                self.group_list.setCurrentItem(_prev)
+                self.group_list.selectRow(prev_row)
                 self.group_list.blockSignals(False)
                 return
         self._group_dirty = False
-        self._cur_group = cur.data(QtCore.Qt.UserRole) if cur else None
+        self._cur_group = self._group_name_at(cur_row)
         self._load_members()
 
     def _load_members(self):
