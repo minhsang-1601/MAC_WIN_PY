@@ -15,7 +15,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("IMAP Checker")
-        self.resize(1150, 760)
 
         try:
             h.cleanup_old_logs()
@@ -30,12 +29,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.accounts_page.master_saved.connect(self.enforce_password_after_save)
 
         self.stack = QtWidgets.QStackedWidget()
-        self.stack.addWidget(self.dashboard_page)   # 0
-        self.stack.addWidget(self.run_job_page)     # 1
-        self.stack.addWidget(self.accounts_page)    # 2
-        self.stack.addWidget(self.config_page)      # 3
-        self.stack.addWidget(self._build_lock_page())  # 4
+        # Bọc mỗi trang trong vùng cuộn → màn hình nhỏ vẫn thấy đủ (cuộn dọc/ngang),
+        # không bị cắt nội dung.
+        self.stack.addWidget(self._scroll(self.dashboard_page))   # 0
+        self.stack.addWidget(self._scroll(self.run_job_page))     # 1
+        self.stack.addWidget(self._scroll(self.accounts_page))    # 2
+        self.stack.addWidget(self._scroll(self.config_page))      # 3
+        self.stack.addWidget(self._build_lock_page())             # 4
         self.setCentralWidget(self.stack)
+
+        # Cửa sổ khớp màn hình: không mở to hơn vùng làm việc thật.
+        self._fit_to_screen(1150, 760)
 
         self._build_toolbar()
 
@@ -49,6 +53,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self._lock_timer = QtCore.QTimer(self)
         self._lock_timer.timeout.connect(self._check_auto_lock)
         self._lock_timer.start(5000)  # kiểm mỗi 5s
+
+    # ============================================================
+    # Khớp màn hình + vùng cuộn
+    # ============================================================
+    def _scroll(self, widget):
+        area = QtWidgets.QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        area.setWidget(widget)
+        return area
+
+    def _fit_to_screen(self, want_w, want_h, margin=80):
+        """Mở cửa sổ vừa vùng làm việc thật (trừ dock/menu), căn giữa."""
+        scr = QtWidgets.QApplication.primaryScreen()
+        avail = scr.availableGeometry() if scr else None
+        if avail:
+            w = min(want_w, avail.width() - margin)
+            h = min(want_h, avail.height() - margin)
+        else:
+            w, h = want_w, want_h
+        self.setMinimumSize(720, 480)
+        self.resize(w, h)
+        if avail:
+            self.move(avail.center().x() - w // 2, avail.center().y() - h // 2)
 
     # ============================================================
     # Toolbar

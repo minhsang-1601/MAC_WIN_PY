@@ -1181,8 +1181,11 @@ class AccountsPage(QtWidgets.QWidget):
 
         self.table = QtWidgets.QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Email", "App Password", "Loại"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        hdr = self.table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)          # Email dãn hết chỗ
+        hdr.setSectionResizeMode(1, QtWidgets.QHeaderView.Interactive)      # App Password: vừa đủ
+        hdr.setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)  # Loại: bằng nội dung
+        self.table.setColumnWidth(1, 190)  # ~20 ký tự, không phí chỗ
         self.pwd_delegate = PasswordDelegate(self.table)
         self.table.setItemDelegateForColumn(self.COL_PWD, self.pwd_delegate)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -1235,6 +1238,20 @@ class AccountsPage(QtWidgets.QWidget):
         self.member_hint.setStyleSheet("color:#555;")
         self.member_hint.setWordWrap(True)
         v.addWidget(self.member_hint)
+
+        # Ô Filter: gõ để tìm nhanh email trong danh sách tích (ẩn dòng không khớp,
+        # KHÔNG mất trạng thái đã tích).
+        filter_row = QtWidgets.QHBoxLayout()
+        filter_row.addWidget(QtWidgets.QLabel("🔎"))
+        self.member_filter = QtWidgets.QLineEdit()
+        self.member_filter.setPlaceholderText("Tìm email trong nhóm…")
+        self.member_filter.setClearButtonEnabled(True)
+        self.member_filter.textChanged.connect(self._filter_members)
+        filter_row.addWidget(self.member_filter, 1)
+        self.member_count_lbl = QtWidgets.QLabel("")
+        self.member_count_lbl.setStyleSheet("color:#555;")
+        filter_row.addWidget(self.member_count_lbl)
+        v.addLayout(filter_row)
 
         self.member_list = QtWidgets.QListWidget()
         self.member_list.itemChanged.connect(self._on_member_toggled)
@@ -1466,9 +1483,30 @@ class AccountsPage(QtWidgets.QWidget):
         else:
             self.member_hint.setText("Chọn một nhóm để tích email thuộc nhóm.")
         self.member_list.blockSignals(False)
+        # Reset ô filter mỗi lần đổi nhóm + cập nhật đếm.
+        if hasattr(self, "member_filter"):
+            self.member_filter.blockSignals(True)
+            self.member_filter.clear()
+            self.member_filter.blockSignals(False)
+        self._filter_members(self.member_filter.text() if hasattr(self, "member_filter") else "")
+
+    def _filter_members(self, text):
+        t = (text or "").strip().lower()
+        for i in range(self.member_list.count()):
+            it = self.member_list.item(i)
+            it.setHidden(bool(t) and t not in it.text().lower())
+        self._update_member_count()
+
+    def _update_member_count(self):
+        total = self.member_list.count()
+        checked = sum(
+            1 for i in range(total)
+            if self.member_list.item(i).checkState() == QtCore.Qt.Checked)
+        self.member_count_lbl.setText(f"đã tích {checked}/{total}" if total else "")
 
     def _on_member_toggled(self, _item):
         self._group_dirty = True
+        self._update_member_count()
 
     def _create_group(self):
         name, ok = QtWidgets.QInputDialog.getText(self, "Tạo nhóm", "Tên nhóm:")
