@@ -1638,31 +1638,68 @@ class AccountsPage(QtWidgets.QWidget):
 # ============================================================
 
 class ConfigPage(QtWidgets.QWidget):
+    """Cấu hình config.ini — bố cục 2 cột giống trang Account:
+    trái = bảng Section (STT · Tên · Tóm tắt), phải = form 6 ô sửa section.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._dirty = False
         self._loading = False
+        self._cur_section = None
+        self.cfg = h.load_ini()
+
         layout = QtWidgets.QVBoxLayout(self)
         title = QtWidgets.QLabel("Cấu hình (config.ini)")
         title.setStyleSheet("font-size: 22px; font-weight: 700; color: #1a3a6e;")
         layout.addWidget(title)
 
-        top = QtWidgets.QHBoxLayout()
-        self.section_cb = QtWidgets.QComboBox()
-        self.section_cb.currentIndexChanged.connect(self._load_section)
-        top.addWidget(QtWidgets.QLabel("Section:"))
-        top.addWidget(self.section_cb, 1)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        splitter.addWidget(self._build_section_panel())
+        splitter.addWidget(self._build_editor_panel())
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 3)
+        layout.addWidget(splitter, 1)
 
+        self.reload()
+
+    # ---- Trái: bảng Section ----
+    def _build_section_panel(self):
+        box = QtWidgets.QGroupBox("📑 Danh sách Section (bộ lọc check mail)")
+        v = QtWidgets.QVBoxLayout(box)
+
+        self.section_table = QtWidgets.QTableWidget(0, 3)
+        self.section_table.setHorizontalHeaderLabels(["STT", "Section", "Tóm tắt"])
+        self.section_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.section_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.section_table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.section_table.setAlternatingRowColors(True)
+        self.section_table.verticalHeader().setVisible(False)
+        shdr = self.section_table.horizontalHeader()
+        shdr.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeToContents)  # STT
+        shdr.setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)  # Section
+        shdr.setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)           # Tóm tắt
+        self.section_table.currentCellChanged.connect(self._on_section_row_changed)
+        v.addWidget(self.section_table, 1)
+
+        row = QtWidgets.QHBoxLayout()
         self.new_section_edit = QtWidgets.QLineEdit()
-        self.new_section_edit.setPlaceholderText("PokeX")
-        self.new_section_btn = QtWidgets.QPushButton("➕ Tạo section")
-        self.new_section_btn.clicked.connect(self._create_section)
-        top.addWidget(self.new_section_edit)
-        top.addWidget(self.new_section_btn)
-        layout.addLayout(top)
+        self.new_section_edit.setPlaceholderText("Tên section mới (VD: PokeX)")
+        new_btn = QtWidgets.QPushButton("➕ Tạo section")
+        new_btn.clicked.connect(self._create_section)
+        del_btn = QtWidgets.QPushButton("🗑️ Xoá section")
+        del_btn.clicked.connect(self._delete_section)
+        row.addWidget(self.new_section_edit, 1)
+        row.addWidget(new_btn)
+        row.addWidget(del_btn)
+        v.addLayout(row)
+        return box
 
+    # ---- Phải: form sửa ----
+    def _build_editor_panel(self):
         self.group = QtWidgets.QGroupBox("")
-        form = QtWidgets.QFormLayout(self.group)
+        outer = QtWidgets.QVBoxLayout(self.group)
+        form = QtWidgets.QFormLayout()
         form.setLabelAlignment(QtCore.Qt.AlignLeft)
         form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.AllNonFixedFieldsGrow)
@@ -1670,59 +1707,110 @@ class ConfigPage(QtWidgets.QWidget):
         self.fields = {}
         for field in h.CONFIG_FIELDS:
             edit = QtWidgets.QLineEdit()
-            edit.textChanged.connect(self._mark_dirty)
+            edit.textChanged.connect(self._on_field_edited)
             label = h.CONFIG_FIELD_LABELS.get(field, field)
             form.addRow(f"{label}:", edit)
             self.fields[field] = edit
-        layout.addWidget(self.group)
+        outer.addLayout(form)
 
-        btn_row = QtWidgets.QHBoxLayout()
         save_btn = QtWidgets.QPushButton("💾 Lưu section")
         save_btn.clicked.connect(self._save_section)
-        del_btn = QtWidgets.QPushButton("🗑️ Xoá section")
-        del_btn.clicked.connect(self._delete_section)
-        btn_row.addWidget(save_btn)
-        btn_row.addWidget(del_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-        layout.addStretch()
+        outer.addWidget(save_btn, alignment=QtCore.Qt.AlignRight)
+        outer.addStretch()
+        return self.group
 
-        self.reload()
-
+    # ---- Dữ liệu ----
     def reload(self):
-        """Nạp lại từ đĩa — bỏ qua nếu đang có thay đổi chưa lưu, tránh mất dữ liệu
-        khi chuyển trang đi rồi quay lại (chỉ 'Lưu section' mới thật sự ghi đĩa)."""
-        if self._dirty:
-            self._refresh_dropdown()
-            return
-        self.cfg = h.load_ini()
-        self._refresh_dropdown()
-
-    def _refresh_dropdown(self, select=None):
-        current = select if select is not None else self.section_cb.currentText()
-        self.section_cb.blockSignals(True)
-        self.section_cb.clear()
-        self.section_cb.addItems(h.job_sections(self.cfg))
-        idx = self.section_cb.findText(current)
-        self.section_cb.setCurrentIndex(idx if idx >= 0 else 0)
-        self.section_cb.blockSignals(False)
-        self._load_section()
-
-    def _mark_dirty(self):
-        if not self._loading:
-            self._dirty = True
+        # Chỉ 'Lưu section' mới ghi đĩa; đang sửa dở thì không nạp lại từ đĩa.
+        if not self._dirty:
+            self.cfg = h.load_ini()
+        self._refresh_table()
 
     def has_unsaved_changes(self):
         return self._dirty
 
+    def _summary(self, section):
+        parts = []
+        frm = self.cfg[section].get("from", "").strip()
+        sub = self.cfg[section].get("subject_title", "").strip()
+        kw = self.cfg[section].get("keywords", "").strip()
+        mins = self.cfg[section].get("recent_minutes", "").strip()
+        if frm:
+            parts.append(f"from:{frm}")
+        if sub:
+            parts.append(f"tiêu đề:{sub}")
+        if kw:
+            parts.append(f"kw:{kw}")
+        if mins:
+            parts.append(f"{mins}′")
+        return " · ".join(parts)
+
+    def _refresh_table(self):
+        cur = self._cur_section
+        self.section_table.blockSignals(True)
+        self.section_table.setRowCount(0)
+        sections = h.job_sections(self.cfg)
+        self.section_table.setRowCount(len(sections))
+        for i, name in enumerate(sections):
+            stt = QtWidgets.QTableWidgetItem(str(i + 1))
+            stt.setTextAlignment(QtCore.Qt.AlignCenter)
+            self.section_table.setItem(i, 0, stt)
+            nm = QtWidgets.QTableWidgetItem(name)
+            nm.setData(QtCore.Qt.UserRole, name)
+            self.section_table.setItem(i, 1, nm)
+            self.section_table.setItem(i, 2, QtWidgets.QTableWidgetItem(self._summary(name)))
+        self.section_table.blockSignals(False)
+        # chọn lại section cũ nếu còn, không thì chọn dòng đầu
+        target = None
+        for i in range(self.section_table.rowCount()):
+            if self.section_table.item(i, 1).data(QtCore.Qt.UserRole) == cur:
+                target = i
+                break
+        if target is None and self.section_table.rowCount() > 0:
+            target = 0
+        if target is not None:
+            self.section_table.selectRow(target)
+        else:
+            self._cur_section = None
+            self._load_section()
+
+    def _section_name_at(self, row):
+        if row is None or row < 0:
+            return None
+        item = self.section_table.item(row, 1)
+        return item.data(QtCore.Qt.UserRole) if item else None
+
+    def _on_section_row_changed(self, cur_row, _cc, prev_row, _pc):
+        if cur_row == prev_row:
+            return
+        if self._dirty and prev_row is not None and prev_row >= 0:
+            ret = QtWidgets.QMessageBox.question(
+                self, "Chưa lưu",
+                "Section hiện tại có thay đổi chưa lưu. Đổi section sẽ mất thay đổi.\n\nVẫn đổi?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No)
+            if ret != QtWidgets.QMessageBox.Yes:
+                self.section_table.blockSignals(True)
+                self.section_table.selectRow(prev_row)
+                self.section_table.blockSignals(False)
+                return
+        self._dirty = False
+        self._cur_section = self._section_name_at(cur_row)
+        self._load_section()
+
     def _load_section(self):
         self._loading = True
-        section = self.section_cb.currentText()
-        self.group.setTitle(f"[{section}]" if section else "")
+        section = self._cur_section
+        self.group.setTitle(f"[{section}]" if section else "Chọn một section để sửa")
         for field, edit in self.fields.items():
             val = self.cfg[section].get(field, "") if section and section in self.cfg else ""
             edit.setText(val)
+            edit.setEnabled(bool(section))
         self._loading = False
+
+    def _on_field_edited(self):
+        if not self._loading:
+            self._dirty = True
 
     def _create_section(self):
         name = self.new_section_edit.text().strip()
@@ -1731,33 +1819,40 @@ class ConfigPage(QtWidgets.QWidget):
         if name in self.cfg:
             QtWidgets.QMessageBox.warning(self, "Trùng tên", "Section đã tồn tại.")
             return
-        # Chỉ thêm vào bộ nhớ — CHƯA ghi xuống đĩa. Phải bấm "Lưu section" mới lưu thật.
+        # Chỉ thêm vào bộ nhớ — bấm 'Lưu section' mới ghi đĩa.
         self.cfg[name] = {k: "" for k in h.CONFIG_FIELDS}
         self.new_section_edit.clear()
-        self._refresh_dropdown(select=name)
+        self._cur_section = name
         self._dirty = True
+        self._refresh_table()
 
     def _save_section(self):
-        section = self.section_cb.currentText()
+        section = self._cur_section
         if not section:
             return
+        if section not in self.cfg:
+            self.cfg[section] = {}
         for field, edit in self.fields.items():
             self.cfg[section][field] = edit.text()
         h.save_ini(self.cfg)
         self._dirty = False
+        self._refresh_table()
         QtWidgets.QMessageBox.information(self, "Đã lưu", f"Đã lưu section [{section}].")
 
     def _delete_section(self):
-        section = self.section_cb.currentText()
+        section = self._cur_section
         if not section:
             return
         ret = QtWidgets.QMessageBox.question(
             self, "Xác nhận xoá", f"Xoá section [{section}]?",
             QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-        )
-        if ret == QtWidgets.QMessageBox.Yes:
+            QtWidgets.QMessageBox.No)
+        if ret != QtWidgets.QMessageBox.Yes:
+            return
+        if self.cfg.has_section(section):
             self.cfg.remove_section(section)
             h.save_ini(self.cfg)
-            self._dirty = False
-            self.cfg = h.load_ini()
-            self._refresh_dropdown()
+        self._dirty = False
+        self._cur_section = None
+        self.cfg = h.load_ini()
+        self._refresh_table()
