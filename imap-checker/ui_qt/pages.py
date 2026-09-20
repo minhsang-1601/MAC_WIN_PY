@@ -1447,15 +1447,18 @@ class AccountsPage(QtWidgets.QWidget):
         self.group_list.blockSignals(True)
         cur = self._cur_group
         self.group_list.clear()
-        for g in h.list_groups():
-            self.group_list.addItem(g["name"])
+        # Hiển thị có STT ("1. Tên"); tên THẬT lưu ở UserRole để tra cứu.
+        for i, g in enumerate(h.list_groups(), 1):
+            it = QtWidgets.QListWidgetItem(f"{i}. {g['name']}")
+            it.setData(QtCore.Qt.UserRole, g["name"])
+            self.group_list.addItem(it)
         self.group_list.blockSignals(False)
-        # chọn lại nhóm cũ nếu còn
+        # chọn lại nhóm cũ nếu còn (khớp theo tên thật ở UserRole)
         if cur:
-            items = self.group_list.findItems(cur, QtCore.Qt.MatchExactly)
-            if items:
-                self.group_list.setCurrentItem(items[0])
-                return
+            for i in range(self.group_list.count()):
+                if self.group_list.item(i).data(QtCore.Qt.UserRole) == cur:
+                    self.group_list.setCurrentItem(self.group_list.item(i))
+                    return
         self._cur_group = None
         self._load_members()
 
@@ -1472,7 +1475,7 @@ class AccountsPage(QtWidgets.QWidget):
                 self.group_list.blockSignals(False)
                 return
         self._group_dirty = False
-        self._cur_group = cur.text() if cur else None
+        self._cur_group = cur.data(QtCore.Qt.UserRole) if cur else None
         self._load_members()
 
     def _load_members(self):
