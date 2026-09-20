@@ -87,6 +87,28 @@ class DashboardPage(QtWidgets.QWidget):
         top.addWidget(self.refresh_btn)
         layout.addLayout(top)
 
+        # ── 🔒 Bảo mật: đặt/đổi/bỏ mật khẩu + thời gian tự khoá ──
+        sec_box = QtWidgets.QGroupBox("🔒 Bảo mật màn hình")
+        sec = QtWidgets.QHBoxLayout(sec_box)
+        self.sec_status = QtWidgets.QLabel("")
+        sec.addWidget(self.sec_status)
+        sec.addStretch()
+        self.set_pwd_btn = QtWidgets.QPushButton("Đặt mật khẩu")
+        self.set_pwd_btn.clicked.connect(self._set_or_change_pwd)
+        sec.addWidget(self.set_pwd_btn)
+        self.clr_pwd_btn = QtWidgets.QPushButton("Bỏ mật khẩu")
+        self.clr_pwd_btn.clicked.connect(self._clear_pwd)
+        sec.addWidget(self.clr_pwd_btn)
+        sec.addSpacing(16)
+        sec.addWidget(QtWidgets.QLabel("Tự khoá sau:"))
+        self.autolock_spin = QtWidgets.QSpinBox()
+        self.autolock_spin.setRange(0, 240)
+        self.autolock_spin.setSuffix(" phút (0 = tắt)")
+        self.autolock_spin.setValue(h.get_auto_lock_minutes())
+        self.autolock_spin.editingFinished.connect(self._save_autolock)
+        sec.addWidget(self.autolock_spin)
+        layout.addWidget(sec_box)
+
         splitter = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
 
         acc_box = QtWidgets.QGroupBox("👥 Danh sách gốc & Nhóm mail")
@@ -129,6 +151,7 @@ class DashboardPage(QtWidgets.QWidget):
         self.reload()
 
     def reload(self):
+        self._refresh_security()
         # Dòng đầu: danh sách gốc; các dòng sau: từng nhóm.
         master_n = len(h.master_accounts())
         groups = h.list_groups()
@@ -149,6 +172,37 @@ class DashboardPage(QtWidgets.QWidget):
                 item = QtWidgets.QListWidgetItem(f"{p.name}   ·   {mtime}")
                 item.setData(QtCore.Qt.UserRole, str(p))
                 self.log_list.addItem(item)
+
+    def _refresh_security(self):
+        on = h.has_screen_password()
+        self.sec_status.setText(
+            "🟢 Đang bật — mở app cần mật khẩu" if on
+            else "⚪ Chưa đặt — app mở tự do")
+        self.set_pwd_btn.setText("Đổi mật khẩu" if on else "Đặt mật khẩu")
+        self.clr_pwd_btn.setEnabled(on)
+        self.autolock_spin.blockSignals(True)
+        self.autolock_spin.setValue(h.get_auto_lock_minutes())
+        self.autolock_spin.blockSignals(False)
+
+    def _set_or_change_pwd(self):
+        from security import SetPasswordDialog
+        SetPasswordDialog(self).exec_()
+        self._refresh_security()
+
+    def _clear_pwd(self):
+        if not h.has_screen_password():
+            return
+        ret = QtWidgets.QMessageBox.question(
+            self, "Bỏ mật khẩu",
+            "Bỏ mật khẩu màn hình? App sẽ mở tự do, không cần nhập mật khẩu nữa.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No)
+        if ret == QtWidgets.QMessageBox.Yes:
+            h.clear_screen_password()
+            self._refresh_security()
+
+    def _save_autolock(self):
+        h.set_auto_lock_minutes(self.autolock_spin.value())
 
     def _save_retention(self):
         h.set_log_retention_days(self.retention_spin.value())
