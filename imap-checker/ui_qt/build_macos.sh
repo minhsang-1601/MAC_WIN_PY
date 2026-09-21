@@ -14,6 +14,9 @@ fi
 PRODUCT_DIR="$SCRIPT_DIR/Product"
 mkdir -p "$PRODUCT_DIR"
 
+# common/ nằm ở thư mục cha (imap-checker) — cho Nuitka thấy để --include-package=common
+export PYTHONPATH="$SCRIPT_DIR/..:$PYTHONPATH"
+
 echo "🔨 Bắt đầu build bằng Nuitka..."
 
 python -m nuitka \
@@ -24,6 +27,7 @@ python -m nuitka \
   --macos-app-icon=AppIcon.icns \
   --include-data-files=AppIcon.png=AppIcon.png \
   --enable-plugin=pyqt5 \
+  --include-package=common \
   --nofollow-import-to=PyQt5.QtQuick \
   --nofollow-import-to=PyQt5.QtQml \
   --nofollow-import-to=PyQt5.QtWebEngine \
