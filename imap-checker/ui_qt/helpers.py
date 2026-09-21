@@ -34,7 +34,8 @@ from common.accounts import (  # noqa: E402,F401
 )
 from common.config_ini import load_ini, save_ini, job_sections  # noqa: E402,F401
 from common.mailcfg import (  # noqa: E402,F401
-    get_mail_config_defaults, list_sendable_accounts, list_accounts_with_password,
+    get_mail_config_defaults, save_mail_config,
+    list_sendable_accounts, list_accounts_with_password,
 )
 from common.scheduler import (  # noqa: E402,F401
     LAUNCH_AGENTS_DIR, LAUNCHD_LABEL_PREFIX,

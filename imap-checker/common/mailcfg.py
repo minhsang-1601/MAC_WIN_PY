@@ -19,6 +19,19 @@ def _read_mail_conf():
         return {}
 
 
+def save_mail_config(sender, password, to_email):
+    """Ghi SEND_MAIL/mail_account.conf (định dạng Python) làm FROM/TO mặc định
+    khi gửi báo cáo. password là App Password của FROM (để SMTP đăng nhập)."""
+    MAIL_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    content = (
+        "# FROM/TO mặc định khi gửi mail báo cáo (KHÔNG commit).\n"
+        f"SENDER_EMAIL = {sender!r}\n"
+        f"APP_PASSWORD = {password!r}\n"
+        f"TO_EMAILS = [{to_email!r}]\n"
+    )
+    MAIL_CONFIG_PATH.write_text(content, encoding="utf-8")
+
+
 def get_mail_config_defaults():
     """(sender_email, to_email) mặc định từ mail_account.conf.
 

@@ -1885,6 +1885,27 @@ class SettingsPage(QtWidgets.QWidget):
         lv.addStretch()
         layout.addWidget(log_box)
 
+        # ── 📧 Mail báo cáo mặc định (FROM/TO) ──
+        mail_box = QtWidgets.QGroupBox("📧 Mail báo cáo mặc định")
+        mv = QtWidgets.QVBoxLayout(mail_box)
+        mv.addWidget(QtWidgets.QLabel(
+            "FROM phải là email đã lưu trong danh sách gốc (cần App Password để "
+            "gửi). TO là nơi nhận báo cáo."))
+        mrow = QtWidgets.QHBoxLayout()
+        mrow.addWidget(QtWidgets.QLabel("Từ (FROM):"))
+        self.mail_from = QtWidgets.QComboBox()
+        self.mail_from.setEditable(True)
+        mrow.addWidget(self.mail_from, 1)
+        mrow.addWidget(QtWidgets.QLabel("Đến (TO):"))
+        self.mail_to = QtWidgets.QComboBox()
+        self.mail_to.setEditable(True)
+        mrow.addWidget(self.mail_to, 1)
+        save_mail = QtWidgets.QPushButton("💾 Lưu")
+        save_mail.clicked.connect(self._save_mail)
+        mrow.addWidget(save_mail)
+        mv.addLayout(mrow)
+        layout.addWidget(mail_box)
+
         # ── ℹ️ Thông tin ──
         info_box = QtWidgets.QGroupBox("ℹ️ Thông tin")
         iv = QtWidgets.QFormLayout(info_box)
@@ -1892,10 +1913,8 @@ class SettingsPage(QtWidgets.QWidget):
         self.info_base.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         self.info_master = QtWidgets.QLabel("")
         self.info_master.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.info_mail = QtWidgets.QLabel("")
         iv.addRow("Thư mục dữ liệu:", self.info_base)
         iv.addRow("Danh sách gốc:", self.info_master)
-        iv.addRow("Mail báo cáo (mặc định):", self.info_mail)
         layout.addWidget(info_box)
 
         layout.addStretch()
@@ -1915,8 +1934,27 @@ class SettingsPage(QtWidgets.QWidget):
         self.retention_spin.setValue(h.get_log_retention_days())
         self.retention_spin.blockSignals(False)
         self.info_master.setText(h.get_master_file() or "(chưa chọn)")
+        # FROM/TO chỉ lấy từ DANH SÁCH GỐC (một file duy nhất).
+        master = h.master_accounts()
+        self._from_accounts = {e: p for e, p in master.items()
+                               if p and h.get_provider(e) is not None}
         sender, to = h.get_mail_config_defaults()
-        self.info_mail.setText(f"{sender or '(chưa có)'} → {to or '(chưa có)'}")
+        self.mail_from.blockSignals(True)
+        self.mail_from.clear()
+        froms = sorted(self._from_accounts.keys())
+        if sender and sender not in froms:
+            froms.insert(0, sender)
+        self.mail_from.addItems(froms)
+        self.mail_from.setCurrentText(sender or "")
+        self.mail_from.blockSignals(False)
+        self.mail_to.blockSignals(True)
+        self.mail_to.clear()
+        tos = sorted(e for e, p in master.items() if p)
+        if to and to not in tos:
+            tos.insert(0, to)
+        self.mail_to.addItems(tos)
+        self.mail_to.setCurrentText(to or "")
+        self.mail_to.blockSignals(False)
 
     def _set_or_change_pwd(self):
         from security import SetPasswordDialog
@@ -1937,6 +1975,23 @@ class SettingsPage(QtWidgets.QWidget):
 
     def _save_autolock(self):
         h.set_auto_lock_minutes(self.autolock_spin.value())
+
+    def _save_mail(self):
+        sender = self.mail_from.currentText().strip()
+        to = self.mail_to.currentText().strip()
+        if not sender or not to:
+            QtWidgets.QMessageBox.warning(self, "Thiếu dữ liệu", "Chọn cả FROM và TO.")
+            return
+        pwd = self._from_accounts.get(sender)
+        if not pwd:
+            QtWidgets.QMessageBox.warning(
+                self, "FROM chưa có App Password",
+                f"'{sender}' chưa có trong danh sách gốc (hoặc không phải Gmail/"
+                "Yahoo có App Password). FROM phải là email gửi được để đăng nhập SMTP.")
+            return
+        h.save_mail_config(sender, pwd, to)
+        QtWidgets.QMessageBox.information(
+            self, "Đã lưu", f"Mail báo cáo mặc định:\n{sender} → {to}")
 
     def _save_retention(self):
         h.set_log_retention_days(self.retention_spin.value())
