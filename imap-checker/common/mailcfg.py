@@ -4,7 +4,7 @@ email dùng được làm FROM/TO. Không phụ thuộc PyQt.
 """
 from common.paths import MAIL_CONFIG_PATH
 from common.providers import get_provider
-from common.accounts import list_all_accounts
+from common.groups import master_accounts
 
 
 def _read_mail_conf():
@@ -46,14 +46,14 @@ def get_mail_config_defaults():
 
 
 def list_sendable_accounts():
-    """Email đã biết + có mật khẩu + thuộc Gmail/Yahoo — dùng làm FROM khi gửi
-    báo cáo (SMTP hỗ trợ cả Gmail lẫn Yahoo)."""
-    accounts = list_all_accounts()
+    """Email trong DANH SÁCH GỐC + có mật khẩu + thuộc Gmail/Yahoo — dùng làm
+    FROM khi gửi báo cáo (SMTP hỗ trợ cả Gmail lẫn Yahoo)."""
+    accounts = master_accounts()
     return {e: p for e, p in accounts.items() if p and get_provider(e) is not None}
 
 
 def list_accounts_with_password():
-    """Mọi email đã biết có mật khẩu (không giới hạn provider) — dùng làm TO,
-    vì người nhận không cần đăng nhập/xác thực gì cả."""
-    accounts = list_all_accounts()
+    """Mọi email trong DANH SÁCH GỐC có mật khẩu (không giới hạn provider) —
+    dùng làm TO, vì người nhận không cần đăng nhập/xác thực gì cả."""
+    accounts = master_accounts()
     return {e: p for e, p in accounts.items() if p}
